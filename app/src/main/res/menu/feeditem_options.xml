@@ -9,6 +9,11 @@
     </item>
 
     <item
+        android:id="@+id/remove_new_flag_item"
+        custom:showAsAction="collapseActionView"
+        android:title="@string/remove_new_flag_label" />
+
+    <item
         android:id="@+id/mark_read_item"
         custom:showAsAction="collapseActionView"
         android:title="@string/mark_read_label">
@@ -84,13 +89,11 @@
                 android:id="@+id/share_download_url_with_position_item"
                 android:menuCategory="container"
                 android:title="@string/share_item_url_with_position_label" />
+            <item
+                android:id="@+id/share_file"
+                android:menuCategory="container"
+                android:title="@string/share_file_label" />
         </menu>
-    </item>
-
-    <item
-        android:id="@+id/support_item"
-        custom:showAsAction="collapseActionView"
-        android:title="@string/support_label">
     </item>
 
     <item

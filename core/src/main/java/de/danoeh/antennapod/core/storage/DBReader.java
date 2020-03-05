@@ -1,10 +1,12 @@
 package de.danoeh.antennapod.core.storage;
 
 import android.database.Cursor;
-import android.support.v4.util.ArrayMap;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.collection.ArrayMap;
+import android.text.TextUtils;
 import android.util.Log;
 
-import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -14,13 +16,9 @@ import java.util.Map;
 
 import de.danoeh.antennapod.core.feed.Chapter;
 import de.danoeh.antennapod.core.feed.Feed;
-import de.danoeh.antennapod.core.feed.FeedImage;
 import de.danoeh.antennapod.core.feed.FeedItem;
 import de.danoeh.antennapod.core.feed.FeedMedia;
 import de.danoeh.antennapod.core.feed.FeedPreferences;
-import de.danoeh.antennapod.core.feed.ID3Chapter;
-import de.danoeh.antennapod.core.feed.SimpleChapter;
-import de.danoeh.antennapod.core.feed.VorbisCommentChapter;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 import de.danoeh.antennapod.core.service.download.DownloadStatus;
 import de.danoeh.antennapod.core.util.LongIntMap;
@@ -28,13 +26,11 @@ import de.danoeh.antennapod.core.util.LongList;
 import de.danoeh.antennapod.core.util.comparator.DownloadStatusComparator;
 import de.danoeh.antennapod.core.util.comparator.FeedItemPubdateComparator;
 import de.danoeh.antennapod.core.util.comparator.PlaybackCompletionDateComparator;
-import de.danoeh.antennapod.core.util.flattr.FlattrThing;
 
 /**
  * Provides methods for reading data from the AntennaPod database.
  * In general, all database calls in DBReader-methods are executed on the caller's thread.
  * This means that the caller should make sure that DBReader-methods are not executed on the GUI-thread.
- * This class will use the {@link de.danoeh.antennapod.core.feed.EventDistributor} to notify listeners about changes in the database.
  */
 public final class DBReader {
 
@@ -48,7 +44,7 @@ public final class DBReader {
     /**
      * Maximum size of the list returned by {@link #getDownloadLog()}.
      */
-    public static final int DOWNLOAD_LOG_SIZE = 200;
+    private static final int DOWNLOAD_LOG_SIZE = 200;
 
 
     private DBReader() {
@@ -61,28 +57,35 @@ public final class DBReader {
      * of the returned list does NOT have its list of FeedItems yet. The FeedItem-list
      * can be loaded separately with {@link #getFeedItemList(Feed)}.
      */
+    @NonNull
     public static List<Feed> getFeedList() {
         Log.d(TAG, "Extracting Feedlist");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        List<Feed> result = getFeedList(adapter);
-        adapter.close();
-        return result;
+        try {
+            return getFeedList(adapter);
+        } finally {
+            adapter.close();
+        }
     }
 
+    @NonNull
     private static List<Feed> getFeedList(PodDBAdapter adapter) {
-        Cursor feedlistCursor = adapter.getAllFeedsCursor();
-        List<Feed> feeds = new ArrayList<>(feedlistCursor.getCount());
-
-        if (feedlistCursor.moveToFirst()) {
-            do {
-                Feed feed = extractFeedFromCursorRow(adapter, feedlistCursor);
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getAllFeedsCursor();
+            List<Feed> feeds = new ArrayList<>(cursor.getCount());
+            while (cursor.moveToNext()) {
+                Feed feed = extractFeedFromCursorRow(cursor);
                 feeds.add(feed);
-            } while (feedlistCursor.moveToNext());
+            }
+            return feeds;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
         }
-        feedlistCursor.close();
-        return feeds;
     }
 
     /**
@@ -92,23 +95,26 @@ public final class DBReader {
      */
     public static List<String> getFeedListDownloadUrls() {
         PodDBAdapter adapter = PodDBAdapter.getInstance();
-        List<String> result = new ArrayList<>();
         adapter.open();
-        Cursor feeds = adapter.getFeedCursorDownloadUrls();
-        if (feeds.moveToFirst()) {
-            do {
-                result.add(feeds.getString(1));
-            } while (feeds.moveToNext());
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getFeedCursorDownloadUrls();
+            List<String> result = new ArrayList<>(cursor.getCount());
+            while (cursor.moveToNext()) {
+                result.add(cursor.getString(1));
+            }
+            return result;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
         }
-        feeds.close();
-        adapter.close();
-
-        return result;
     }
-
 
     /**
      * Loads additional data in to the feed items from other database queries
+     *
      * @param items the FeedItems who should have other data loaded
      */
     public static void loadAdditionalFeedItemListData(List<FeedItem> items) {
@@ -116,7 +122,7 @@ public final class DBReader {
         loadFeedDataOfFeedItemList(items);
     }
 
-    public static void loadTagsOfFeedItemList(List<FeedItem> items) {
+    private static void loadTagsOfFeedItemList(List<FeedItem> items) {
         LongList favoriteIds = getFavoriteIDList();
         LongList queueIds = getQueueIDList();
 
@@ -135,20 +141,21 @@ public final class DBReader {
      * The feedID-attribute of a FeedItem must be set to the ID of its feed or the method will
      * not find the correct feed of an item.
      *
-     * @param items   The FeedItems whose Feed-objects should be loaded.
+     * @param items The FeedItems whose Feed-objects should be loaded.
      */
-    public static void loadFeedDataOfFeedItemList(List<FeedItem> items) {
+    private static void loadFeedDataOfFeedItemList(List<FeedItem> items) {
         List<Feed> feeds = getFeedList();
+
+        Map<Long, Feed> feedIndex = new ArrayMap<>(feeds.size());
+        for (Feed feed : feeds) {
+            feedIndex.put(feed.getId(), feed);
+        }
         for (FeedItem item : items) {
-            for (Feed feed : feeds) {
-                if (feed.getId() == item.getFeedId()) {
-                    item.setFeed(feed);
-                    break;
-                }
-            }
-            if (item.getFeed() == null) {
+            Feed feed = feedIndex.get(item.getFeedId());
+            if (feed == null) {
                 Log.w(TAG, "No match found for item with ID " + item.getId() + ". Feed ID was " + item.getFeedId());
             }
+            item.setFeed(feed);
         }
     }
 
@@ -156,7 +163,7 @@ public final class DBReader {
      * Loads the list of FeedItems for a certain Feed-object. This method should NOT be used if the FeedItems are not
      * used. In order to get information ABOUT the list of FeedItems, consider using {@link #getFeedStatisticsList()} instead.
      *
-     * @param feed    The Feed whose items should be loaded
+     * @param feed The Feed whose items should be loaded
      * @return A list with the FeedItems of the Feed. The Feed-attribute of the FeedItems will already be set correctly.
      * The method does NOT change the items-attribute of the feed.
      */
@@ -165,57 +172,50 @@ public final class DBReader {
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-
-        Cursor itemlistCursor = adapter.getAllItemsOfFeedCursor(feed);
-        List<FeedItem> items = extractItemlistFromCursor(adapter,
-                itemlistCursor);
-        itemlistCursor.close();
-        adapter.close();
-
-        Collections.sort(items, new FeedItemPubdateComparator());
-
-        for (FeedItem item : items) {
-            item.setFeed(feed);
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getAllItemsOfFeedCursor(feed);
+            List<FeedItem> items = extractItemlistFromCursor(adapter, cursor);
+            Collections.sort(items, new FeedItemPubdateComparator());
+            for (FeedItem item : items) {
+                item.setFeed(feed);
+            }
+            return items;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
         }
-
-        return items;
     }
 
     public static List<FeedItem> extractItemlistFromCursor(Cursor itemlistCursor) {
         Log.d(TAG, "extractItemlistFromCursor() called with: " + "itemlistCursor = [" + itemlistCursor + "]");
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        List<FeedItem> result = extractItemlistFromCursor(adapter, itemlistCursor);
-        adapter.close();
-        return result;
+        try {
+            return extractItemlistFromCursor(adapter, itemlistCursor);
+        } finally {
+            adapter.close();
+        }
     }
 
-    private static List<FeedItem> extractItemlistFromCursor(PodDBAdapter adapter,
-                                                            Cursor cursor) {
+    @NonNull
+    private static List<FeedItem> extractItemlistFromCursor(PodDBAdapter adapter, Cursor cursor) {
         List<FeedItem> result = new ArrayList<>(cursor.getCount());
 
-        LongList imageIds = new LongList(cursor.getCount());
         LongList itemIds = new LongList(cursor.getCount());
         if (cursor.moveToFirst()) {
             do {
-                int indexImage = cursor.getColumnIndex(PodDBAdapter.KEY_IMAGE);
-                long imageId = cursor.getLong(indexImage);
-                imageIds.add(imageId);
-
                 FeedItem item = FeedItem.fromCursor(cursor);
                 result.add(item);
                 itemIds.add(item.getId());
             } while (cursor.moveToNext());
-            Map<Long,FeedImage> images = getFeedImages(adapter, imageIds.toArray());
-            Map<Long,FeedMedia> medias = getFeedMedia(adapter, itemIds.toArray());
-            for(int i=0; i < result.size(); i++) {
-                FeedItem item = result.get(i);
-                long imageId = imageIds.get(i);
-                FeedImage image = images.get(imageId);
-                item.setImage(image);
+            Map<Long, FeedMedia> medias = getFeedMedia(adapter, itemIds);
+            for (FeedItem item : result) {
                 FeedMedia media = medias.get(item.getId());
                 item.setMedia(media);
-                if(media != null) {
+                if (media != null) {
                     media.setItem(item);
                 }
             }
@@ -223,15 +223,14 @@ public final class DBReader {
         return result;
     }
 
-    private static Map<Long,FeedMedia> getFeedMedia(PodDBAdapter adapter,
-                                                    long... itemIds) {
-
-        String[] ids = new String[itemIds.length];
-        for(int i=0, len=itemIds.length; i < len; i++) {
-            ids[i] = String.valueOf(itemIds[i]);
+    private static Map<Long, FeedMedia> getFeedMedia(PodDBAdapter adapter, LongList itemIds) {
+        List<String> ids = new ArrayList<>(itemIds.size());
+        for (long item : itemIds.toArray()) {
+            ids.add(String.valueOf(item));
         }
-        Map<Long,FeedMedia> result = new ArrayMap<>(itemIds.length);
-        Cursor cursor = adapter.getFeedMediaCursor(ids);
+
+        Map<Long, FeedMedia> result = new ArrayMap<>(itemIds.size());
+        Cursor cursor = adapter.getFeedMediaCursor(ids.toArray(new String[0]));
         try {
             if (cursor.moveToFirst()) {
                 do {
@@ -247,36 +246,27 @@ public final class DBReader {
         return result;
     }
 
-    private static Feed extractFeedFromCursorRow(PodDBAdapter adapter,
-                                                 Cursor cursor) {
-        final FeedImage image;
-        int indexImage = cursor.getColumnIndex(PodDBAdapter.KEY_IMAGE);
-        long imageId = cursor.getLong(indexImage);
-        if (imageId != 0) {
-            image = getFeedImage(adapter, imageId);
-        } else {
-            image = null;
-        }
-
+    private static Feed extractFeedFromCursorRow(Cursor cursor) {
         Feed feed = Feed.fromCursor(cursor);
-        if (image != null) {
-            feed.setImage(image);
-            image.setOwner(feed);
-        }
-
         FeedPreferences preferences = FeedPreferences.fromCursor(cursor);
         feed.setPreferences(preferences);
-
         return feed;
     }
 
+    @NonNull
     static List<FeedItem> getQueue(PodDBAdapter adapter) {
         Log.d(TAG, "getQueue()");
-        Cursor itemlistCursor = adapter.getQueueCursor();
-        List<FeedItem> items = extractItemlistFromCursor(adapter, itemlistCursor);
-        itemlistCursor.close();
-        loadAdditionalFeedItemListData(items);
-        return items;
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getQueueCursor();
+            List<FeedItem> items = extractItemlistFromCursor(adapter, cursor);
+            loadAdditionalFeedItemListData(items);
+            return items;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
     }
 
     /**
@@ -290,22 +280,27 @@ public final class DBReader {
         Log.d(TAG, "getQueueIDList() called");
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        LongList result = getQueueIDList(adapter);
-        adapter.close();
-        return result;
+        try {
+            return getQueueIDList(adapter);
+        } finally {
+            adapter.close();
+        }
     }
 
-    static LongList getQueueIDList(PodDBAdapter adapter) {
-        Cursor queueCursor = adapter.getQueueIDCursor();
-
-        LongList queueIds = new LongList(queueCursor.getCount());
-        if (queueCursor.moveToFirst()) {
-            do {
-                queueIds.add(queueCursor.getLong(0));
-            } while (queueCursor.moveToNext());
+    private static LongList getQueueIDList(PodDBAdapter adapter) {
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getQueueIDCursor();
+            LongList queueIds = new LongList(cursor.getCount());
+            while (cursor.moveToNext()) {
+                queueIds.add(cursor.getLong(0));
+            }
+            return queueIds;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
         }
-        queueCursor.close();
-        return queueIds;
     }
 
     /**
@@ -315,14 +310,17 @@ public final class DBReader {
      * @return A list of FeedItems sorted by the same order as the queue. The caller can wrap the returned
      * list in a {@link de.danoeh.antennapod.core.util.QueueAccess} object for easier access to the queue's properties.
      */
+    @NonNull
     public static List<FeedItem> getQueue() {
-        Log.d(TAG, "getQueue() called with: " + "");
+        Log.d(TAG, "getQueue() called");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        List<FeedItem> items = getQueue(adapter);
-        adapter.close();
-        return items;
+        try {
+            return getQueue(adapter);
+        } finally {
+            adapter.close();
+        }
     }
 
     /**
@@ -330,122 +328,125 @@ public final class DBReader {
      *
      * @return A list of FeedItems whose episdoe has been downloaded.
      */
+    @NonNull
     public static List<FeedItem> getDownloadedItems() {
-        Log.d(TAG, "getDownloadedItems() called with: " + "");
+        Log.d(TAG, "getDownloadedItems() called");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-
-        Cursor itemlistCursor = adapter.getDownloadedItemsCursor();
-        List<FeedItem> items = extractItemlistFromCursor(adapter,
-                itemlistCursor);
-        itemlistCursor.close();
-        loadAdditionalFeedItemListData(items);
-        adapter.close();
-
-        Collections.sort(items, new FeedItemPubdateComparator());
-
-        return items;
-
-    }
-
-    /**
-     * Loads a list of FeedItems whose 'read'-attribute is set to false.
-     *
-     * @return A list of FeedItems whose 'read'-attribute it set to false.
-     */
-    public static List<FeedItem> getUnreadItemsList() {
-        Log.d(TAG, "getUnreadItemsList() called");
-
-        PodDBAdapter adapter = PodDBAdapter.getInstance();
-        adapter.open();
-        Cursor itemlistCursor = adapter.getUnreadItemsCursor();
-        List<FeedItem> items = extractItemlistFromCursor(adapter, itemlistCursor);
-        itemlistCursor.close();
-
-        loadAdditionalFeedItemListData(items);
-
-        adapter.close();
-
-        return items;
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getDownloadedItemsCursor();
+            List<FeedItem> items = extractItemlistFromCursor(adapter, cursor);
+            loadAdditionalFeedItemListData(items);
+            Collections.sort(items, new FeedItemPubdateComparator());
+            return items;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
+        }
     }
 
     /**
      * Loads a list of FeedItems that are considered new.
      * Excludes items from feeds that do not have keep updated enabled.
+     *
+     * @param offset The first episode that should be loaded.
+     * @param limit The maximum number of episodes that should be loaded.
      * @return A list of FeedItems that are considered new.
      */
-    public static List<FeedItem> getNewItemsList() {
+    public static List<FeedItem> getNewItemsList(int offset, int limit) {
         Log.d(TAG, "getNewItemsList() called");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-
-        Cursor itemlistCursor = adapter.getNewItemsCursor();
-        List<FeedItem> items = extractItemlistFromCursor(adapter, itemlistCursor);
-        itemlistCursor.close();
-
-        loadAdditionalFeedItemListData(items);
-
-        adapter.close();
-
-        return items;
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getNewItemsCursor(offset, limit);
+            List<FeedItem> items = extractItemlistFromCursor(adapter, cursor);
+            loadAdditionalFeedItemListData(items);
+            return items;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
+        }
     }
 
-    public static List<FeedItem> getFavoriteItemsList() {
+    /**
+     * Loads a list of favorite items.
+     *
+     * @param offset The first episode that should be loaded.
+     * @param limit The maximum number of episodes that should be loaded.
+     * @return A list of FeedItems that are marked as favorite.
+     */
+    public static List<FeedItem> getFavoriteItemsList(int offset, int limit) {
         Log.d(TAG, "getFavoriteItemsList() called");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-
-        Cursor itemlistCursor = adapter.getFavoritesCursor();
-        List<FeedItem> items = extractItemlistFromCursor(adapter, itemlistCursor);
-        itemlistCursor.close();
-
-        loadAdditionalFeedItemListData(items);
-
-        adapter.close();
-
-        return items;
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getFavoritesCursor(offset, limit);
+            List<FeedItem> items = extractItemlistFromCursor(adapter, cursor);
+            loadAdditionalFeedItemListData(items);
+            return items;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
+        }
     }
 
-    public static LongList getFavoriteIDList() {
+    private static LongList getFavoriteIDList() {
         Log.d(TAG, "getFavoriteIDList() called");
+
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        Cursor favoritesCursor = adapter.getFavoritesCursor();
-
-        LongList favoriteIDs = new LongList(favoritesCursor.getCount());
-        if (favoritesCursor.moveToFirst()) {
-            do {
-                favoriteIDs.add(favoritesCursor.getLong(0));
-            } while (favoritesCursor.moveToNext());
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getFavoritesCursor(0, Integer.MAX_VALUE);
+            LongList favoriteIDs = new LongList(cursor.getCount());
+            while (cursor.moveToNext()) {
+                favoriteIDs.add(cursor.getLong(0));
+            }
+            return favoriteIDs;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
         }
-        favoritesCursor.close();
-        adapter.close();
-        return favoriteIDs;
     }
 
     /**
      * Loads a list of FeedItems sorted by pubDate in descending order.
      *
-     * @param limit   The maximum number of episodes that should be loaded.
+     * @param offset The first episode that should be loaded.
+     * @param limit The maximum number of episodes that should be loaded.
      */
-    public static List<FeedItem> getRecentlyPublishedEpisodes(int limit) {
-        Log.d(TAG, "getRecentlyPublishedEpisodes() called with: " + "limit = [" + limit + "]");
+    @NonNull
+    public static List<FeedItem> getRecentlyPublishedEpisodes(int offset, int limit) {
+        Log.d(TAG, "getRecentlyPublishedEpisodes() called with: " + "offset = [" + offset + "]" + " limit = [" + limit + "]" );
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-
-        Cursor itemlistCursor = adapter.getRecentlyPublishedItemsCursor(limit);
-        List<FeedItem> items = extractItemlistFromCursor(adapter, itemlistCursor);
-        itemlistCursor.close();
-
-        loadAdditionalFeedItemListData(items);
-
-        adapter.close();
-
-        return items;
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getRecentlyPublishedItemsCursor(offset, limit);
+            List<FeedItem> items = extractItemlistFromCursor(adapter, cursor);
+            loadAdditionalFeedItemListData(items);
+            return items;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
+        }
     }
 
     /**
@@ -455,27 +456,36 @@ public final class DBReader {
      * @return The playback history. The FeedItems are sorted by their media's playbackCompletionDate in descending order.
      * The size of the returned list is limited by {@link #PLAYBACK_HISTORY_SIZE}.
      */
+    @NonNull
     public static List<FeedItem> getPlaybackHistory() {
         Log.d(TAG, "getPlaybackHistory() called");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
 
-        Cursor mediaCursor = adapter.getCompletedMediaCursor(PLAYBACK_HISTORY_SIZE);
-        String[] itemIds = new String[mediaCursor.getCount()];
-        for (int i = 0; i < itemIds.length && mediaCursor.moveToPosition(i); i++) {
-            int index = mediaCursor.getColumnIndex(PodDBAdapter.KEY_FEEDITEM);
-            itemIds[i] = Long.toString(mediaCursor.getLong(index));
+        Cursor mediaCursor = null;
+        Cursor itemCursor = null;
+        try {
+            mediaCursor = adapter.getCompletedMediaCursor(PLAYBACK_HISTORY_SIZE);
+            String[] itemIds = new String[mediaCursor.getCount()];
+            for (int i = 0; i < itemIds.length && mediaCursor.moveToPosition(i); i++) {
+                int index = mediaCursor.getColumnIndex(PodDBAdapter.KEY_FEEDITEM);
+                itemIds[i] = Long.toString(mediaCursor.getLong(index));
+            }
+            itemCursor = adapter.getFeedItemCursor(itemIds);
+            List<FeedItem> items = extractItemlistFromCursor(adapter, itemCursor);
+            loadAdditionalFeedItemListData(items);
+            Collections.sort(items, new PlaybackCompletionDateComparator());
+            return items;
+        } finally {
+            if (mediaCursor != null) {
+                mediaCursor.close();
+            }
+            if (itemCursor != null) {
+                itemCursor.close();
+            }
+            adapter.close();
         }
-        mediaCursor.close();
-        Cursor itemCursor = adapter.getFeedItemCursor(itemIds);
-        List<FeedItem> items = extractItemlistFromCursor(adapter, itemCursor);
-        loadAdditionalFeedItemListData(items);
-        itemCursor.close();
-        adapter.close();
-
-        Collections.sort(items, new PlaybackCompletionDateComparator());
-        return items;
     }
 
     /**
@@ -489,46 +499,50 @@ public final class DBReader {
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        Cursor logCursor = adapter.getDownloadLogCursor(DOWNLOAD_LOG_SIZE);
-        List<DownloadStatus> downloadLog = new ArrayList<>(logCursor.getCount());
-
-        if (logCursor.moveToFirst()) {
-            do {
-                DownloadStatus status = DownloadStatus.fromCursor(logCursor);
-                downloadLog.add(status);
-            } while (logCursor.moveToNext());
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getDownloadLogCursor(DOWNLOAD_LOG_SIZE);
+            List<DownloadStatus> downloadLog = new ArrayList<>(cursor.getCount());
+            while (cursor.moveToNext()) {
+                downloadLog.add(DownloadStatus.fromCursor(cursor));
+            }
+            Collections.sort(downloadLog, new DownloadStatusComparator());
+            return downloadLog;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
         }
-        logCursor.close();
-        adapter.close();
-        Collections.sort(downloadLog, new DownloadStatusComparator());
-        return downloadLog;
     }
 
     /**
      * Loads the download log for a particular feed from the database.
      *
-     * @param feed Feed for which the download log is loaded
+     * @param feedId Feed id for which the download log is loaded
      * @return A list with DownloadStatus objects that represent the feed's download log,
-     *         newest events first.
+     * newest events first.
      */
-    public static List<DownloadStatus> getFeedDownloadLog(Feed feed) {
-        Log.d(TAG, "getFeedDownloadLog() called with: " + "feed = [" + feed + "]");
+    public static List<DownloadStatus> getFeedDownloadLog(long feedId) {
+        Log.d(TAG, "getFeedDownloadLog() called with: " + "feed = [" + feedId + "]");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        Cursor cursor = adapter.getDownloadLog(Feed.FEEDFILETYPE_FEED, feed.getId());
-        List<DownloadStatus> downloadLog = new ArrayList<>(cursor.getCount());
-
-        if (cursor.moveToFirst()) {
-            do {
-                DownloadStatus status = DownloadStatus.fromCursor(cursor);
-                downloadLog.add(status);
-            } while (cursor.moveToNext());
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getDownloadLog(Feed.FEEDFILETYPE_FEED, feedId);
+            List<DownloadStatus> downloadLog = new ArrayList<>(cursor.getCount());
+            while (cursor.moveToNext()) {
+                downloadLog.add(DownloadStatus.fromCursor(cursor));
+            }
+            Collections.sort(downloadLog, new DownloadStatusComparator());
+            return downloadLog;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
         }
-        cursor.close();
-        adapter.close();
-        Collections.sort(downloadLog, new DownloadStatusComparator());
-        return downloadLog;
     }
 
     /**
@@ -542,177 +556,162 @@ public final class DBReader {
         Log.d(TAG, "getFeedStatisticsList() called");
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        List<FeedItemStatistics> result = new ArrayList<>();
-        Cursor cursor = adapter.getFeedStatisticsCursor();
-        if (cursor.moveToFirst()) {
-            do {
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getFeedStatisticsCursor();
+            List<FeedItemStatistics> result = new ArrayList<>(cursor.getCount());
+            while (cursor.moveToNext()) {
                 FeedItemStatistics fis = FeedItemStatistics.fromCursor(cursor);
                 result.add(fis);
-            } while (cursor.moveToNext());
+            }
+            return result;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
         }
-
-        cursor.close();
-        adapter.close();
-        return result;
     }
 
     /**
      * Loads a specific Feed from the database.
      *
-     * @param feedId  The ID of the Feed
+     * @param feedId The ID of the Feed
      * @return The Feed or null if the Feed could not be found. The Feeds FeedItems will also be loaded from the
      * database and the items-attribute will be set correctly.
      */
     public static Feed getFeed(final long feedId) {
         Log.d(TAG, "getFeed() called with: " + "feedId = [" + feedId + "]");
+
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        Feed result = getFeed(feedId, adapter);
-        adapter.close();
-        return result;
+        try {
+            return getFeed(feedId, adapter);
+        } finally {
+            adapter.close();
+        }
     }
 
+    @Nullable
     static Feed getFeed(final long feedId, PodDBAdapter adapter) {
         Feed feed = null;
-
-        Cursor feedCursor = adapter.getFeedCursor(feedId);
-        if (feedCursor.moveToFirst()) {
-            feed = extractFeedFromCursorRow(adapter, feedCursor);
-            feed.setItems(getFeedItemList(feed));
-        } else {
-            Log.e(TAG, "getFeed could not find feed with id " + feedId);
-        }
-        feedCursor.close();
-        return feed;
-    }
-
-    static FeedItem getFeedItem(final long itemId, PodDBAdapter adapter) {
-        Log.d(TAG, "Loading feeditem with id " + itemId);
-        FeedItem item = null;
-
-        Cursor itemCursor = adapter.getFeedItemCursor(Long.toString(itemId));
-        if (!itemCursor.moveToFirst()) {
-            itemCursor.close();
-            return null;
-        }
-        List<FeedItem> list = extractItemlistFromCursor(adapter, itemCursor);
-        itemCursor.close();
-        if (list.size() > 0) {
-            item = list.get(0);
-            loadAdditionalFeedItemListData(list);
-            if (item.hasChapters()) {
-                loadChaptersOfFeedItem(adapter, item);
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getFeedCursor(feedId);
+            if (cursor.moveToNext()) {
+                feed = extractFeedFromCursorRow(cursor);
+                feed.setItems(getFeedItemList(feed));
+            } else {
+                Log.e(TAG, "getFeed could not find feed with id " + feedId);
+            }
+            return feed;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
             }
         }
-        return item;
     }
 
-    static List<FeedItem> getFeedItems(PodDBAdapter adapter, final long... itemIds) {
+    @Nullable
+    private static FeedItem getFeedItem(final long itemId, PodDBAdapter adapter) {
+        Log.d(TAG, "Loading feeditem with id " + itemId);
 
-        String[] ids = new String[itemIds.length];
-        for(int i = 0; i < itemIds.length; i++) {
-            long itemId = itemIds[i];
-            ids[i] = Long.toString(itemId);
-        }
-
-        List<FeedItem> result;
-
-        Cursor itemCursor = adapter.getFeedItemCursor(ids);
-        if (itemCursor.moveToFirst()) {
-            result = extractItemlistFromCursor(adapter, itemCursor);
-            loadAdditionalFeedItemListData(result);
-            for(FeedItem item : result) {
-                if (item.hasChapters()) {
-                    loadChaptersOfFeedItem(adapter, item);
+        FeedItem item = null;
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getFeedItemCursor(Long.toString(itemId));
+            if (cursor.moveToNext()) {
+                List<FeedItem> list = extractItemlistFromCursor(adapter, cursor);
+                if (!list.isEmpty()) {
+                    item = list.get(0);
+                    loadAdditionalFeedItemListData(list);
+                    if (item.hasChapters()) {
+                        loadChaptersOfFeedItem(adapter, item);
+                    }
                 }
             }
-        } else {
-            result = Collections.emptyList();
+            return item;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
         }
-        itemCursor.close();
-        return result;
-
     }
 
     /**
      * Loads a specific FeedItem from the database. This method should not be used for loading more
      * than one FeedItem because this method might query the database several times for each item.
      *
-     * @param itemId  The ID of the FeedItem
+     * @param itemId The ID of the FeedItem
      * @return The FeedItem or null if the FeedItem could not be found. All FeedComponent-attributes
      * as well as chapter marks of the FeedItem will also be loaded from the database.
      */
+    @Nullable
     public static FeedItem getFeedItem(final long itemId) {
         Log.d(TAG, "getFeedItem() called with: " + "itemId = [" + itemId + "]");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        FeedItem item = getFeedItem(itemId, adapter);
-        adapter.close();
-        return item;
+        try {
+            return getFeedItem(itemId, adapter);
+        } finally {
+            adapter.close();
+        }
     }
 
-    static FeedItem getFeedItem(final String podcastUrl, final String episodeUrl, PodDBAdapter adapter) {
+    @Nullable
+    private static FeedItem getFeedItem(final String podcastUrl, final String episodeUrl, PodDBAdapter adapter) {
         Log.d(TAG, "Loading feeditem with podcast url " + podcastUrl + " and episode url " + episodeUrl);
-        FeedItem item = null;
-        Cursor itemCursor = adapter.getFeedItemCursor(podcastUrl, episodeUrl);
-        if (itemCursor.moveToFirst()) {
-            List<FeedItem> list = extractItemlistFromCursor(adapter, itemCursor);
-            if (list.size() > 0) {
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getFeedItemCursor(podcastUrl, episodeUrl);
+            if (!cursor.moveToNext()) {
+                return null;
+            }
+            List<FeedItem> list = extractItemlistFromCursor(adapter, cursor);
+            FeedItem item = null;
+            if (!list.isEmpty()) {
                 item = list.get(0);
                 loadAdditionalFeedItemListData(list);
                 if (item.hasChapters()) {
                     loadChaptersOfFeedItem(adapter, item);
                 }
             }
+            return item;
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
         }
-        itemCursor.close();
-        return item;
     }
-
-    /**
-     * Loads specific FeedItems from the database. This method canbe used for loading more
-     * than one FeedItem
-     *
-     * @param itemIds  The IDs of the FeedItems
-     * @return The FeedItems or an empty list if none of the FeedItems could be found. All FeedComponent-attributes
-     * as well as chapter marks of the FeedItems will also be loaded from the database.
-     */
-    public static List<FeedItem> getFeedItems(final long... itemIds) {
-        Log.d(TAG, "getFeedItems() called with: " + "itemIds = [" + Arrays.toString(itemIds) + "]");
-        PodDBAdapter adapter = PodDBAdapter.getInstance();
-        adapter.open();
-        List<FeedItem> items = getFeedItems(adapter, itemIds);
-        adapter.close();
-        return items;
-    }
-
 
     /**
      * Returns credentials based on image URL
      *
-     * @param imageUrl  The URL of the image
-     * @return Credentials in format "<Username>:<Password>", empty String if no authorization given
+     * @param imageUrl The URL of the image
+     * @return Credentials in format "Username:Password", empty String if no authorization given
      */
     public static String getImageAuthentication(final String imageUrl) {
         Log.d(TAG, "getImageAuthentication() called with: " + "imageUrl = [" + imageUrl + "]");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        String credentials = getImageAuthentication(imageUrl, adapter);
-        adapter.close();
-        return credentials;
-
+        try {
+            return getImageAuthentication(imageUrl, adapter);
+        } finally {
+            adapter.close();
+        }
     }
 
-    static String getImageAuthentication(final String imageUrl, PodDBAdapter adapter) {
+    private static String getImageAuthentication(final String imageUrl, PodDBAdapter adapter) {
         String credentials = null;
-        Cursor cursor = adapter.getImageAuthenticationCursor(imageUrl);
+        Cursor cursor = null;
         try {
+            cursor = adapter.getImageAuthenticationCursor(imageUrl);
             if (cursor.moveToFirst()) {
                 String username = cursor.getString(0);
                 String password = cursor.getString(1);
-                if(username != null && password != null) {
+                if (!TextUtils.isEmpty(username) && password != null) {
                     credentials = username + ":" + password;
                 } else {
                     credentials = "";
@@ -721,7 +720,9 @@ public final class DBReader {
                 credentials = "";
             }
         } finally {
-            cursor.close();
+            if (cursor != null) {
+                cursor.close();
+            }
         }
         return credentials;
     }
@@ -739,31 +740,39 @@ public final class DBReader {
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        FeedItem item = getFeedItem(podcastUrl, episodeUrl, adapter);
-        adapter.close();
-        return item;
+        try {
+            return getFeedItem(podcastUrl, episodeUrl, adapter);
+        } finally {
+            adapter.close();
+        }
     }
 
     /**
      * Loads additional information about a FeedItem, e.g. shownotes
      *
-     * @param item    The FeedItem
+     * @param item The FeedItem
      */
     public static void loadExtraInformationOfFeedItem(final FeedItem item) {
         Log.d(TAG, "loadExtraInformationOfFeedItem() called with: " + "item = [" + item + "]");
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        Cursor extraCursor = adapter.getExtraInformationOfItem(item);
-        if (extraCursor.moveToFirst()) {
-            int indexDescription = extraCursor.getColumnIndex(PodDBAdapter.KEY_DESCRIPTION);
-            String description = extraCursor.getString(indexDescription);
-            int indexContentEncoded = extraCursor.getColumnIndex(PodDBAdapter.KEY_CONTENT_ENCODED);
-            String contentEncoded = extraCursor.getString(indexContentEncoded);
-            item.setDescription(description);
-            item.setContentEncoded(contentEncoded);
+        Cursor cursor = null;
+        try {
+            cursor = adapter.getExtraInformationOfItem(item);
+            if (cursor.moveToFirst()) {
+                int indexDescription = cursor.getColumnIndex(PodDBAdapter.KEY_DESCRIPTION);
+                String description = cursor.getString(indexDescription);
+                int indexContentEncoded = cursor.getColumnIndex(PodDBAdapter.KEY_CONTENT_ENCODED);
+                String contentEncoded = cursor.getString(indexContentEncoded);
+                item.setDescription(description);
+                item.setContentEncoded(contentEncoded);
+            }
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+            adapter.close();
         }
-        extraCursor.close();
-        adapter.close();
     }
 
     /**
@@ -771,56 +780,32 @@ public final class DBReader {
      * any chapters that this FeedItem has. If no chapters were found in the database, the chapters
      * reference of the FeedItem will be set to null.
      *
-     * @param item    The FeedItem
+     * @param item The FeedItem
      */
     public static void loadChaptersOfFeedItem(final FeedItem item) {
         Log.d(TAG, "loadChaptersOfFeedItem() called with: " + "item = [" + item + "]");
+
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        loadChaptersOfFeedItem(adapter, item);
-        adapter.close();
+        try {
+            loadChaptersOfFeedItem(adapter, item);
+        } finally {
+            adapter.close();
+        }
     }
 
-    static void loadChaptersOfFeedItem(PodDBAdapter adapter, FeedItem item) {
-        Cursor chapterCursor = adapter.getSimpleChaptersOfFeedItemCursor(item);
-        if (chapterCursor.moveToFirst()) {
-            item.setChapters(new ArrayList<>());
-            do {
-                int indexType = chapterCursor.getColumnIndex(PodDBAdapter.KEY_CHAPTER_TYPE);
-                int indexStart = chapterCursor.getColumnIndex(PodDBAdapter.KEY_START);
-                int indexTitle = chapterCursor.getColumnIndex(PodDBAdapter.KEY_TITLE);
-                int indexLink = chapterCursor.getColumnIndex(PodDBAdapter.KEY_LINK);
-
-                int chapterType = chapterCursor.getInt(indexType);
-                Chapter chapter = null;
-                long start = chapterCursor.getLong(indexStart);
-                String title = chapterCursor.getString(indexTitle);
-                String link = chapterCursor.getString(indexLink);
-
-                switch (chapterType) {
-                    case SimpleChapter.CHAPTERTYPE_SIMPLECHAPTER:
-                        chapter = new SimpleChapter(start, title, item,
-                                link);
-                        break;
-                    case ID3Chapter.CHAPTERTYPE_ID3CHAPTER:
-                        chapter = new ID3Chapter(start, title, item,
-                                link);
-                        break;
-                    case VorbisCommentChapter.CHAPTERTYPE_VORBISCOMMENT_CHAPTER:
-                        chapter = new VorbisCommentChapter(start,
-                                title, item, link);
-                        break;
-                }
-                if (chapter != null) {
-                    int indexId = chapterCursor.getColumnIndex(PodDBAdapter.KEY_ID);
-                    chapter.setId(chapterCursor.getLong(indexId));
-                    item.getChapters().add(chapter);
-                }
-            } while (chapterCursor.moveToNext());
-        } else {
-            item.setChapters(null);
+    private static void loadChaptersOfFeedItem(PodDBAdapter adapter, FeedItem item) {
+        try (Cursor cursor = adapter.getSimpleChaptersOfFeedItemCursor(item)) {
+            int chaptersCount = cursor.getCount();
+            if (chaptersCount == 0) {
+                item.setChapters(null);
+                return;
+            }
+            item.setChapters(new ArrayList<>(chaptersCount));
+            while (cursor.moveToNext()) {
+                item.getChapters().add(Chapter.fromCursor(cursor));
+            }
         }
-        chapterCursor.close();
     }
 
     /**
@@ -828,271 +813,182 @@ public final class DBReader {
      *
      * @return The number of downloaded episodes.
      */
+
     public static int getNumberOfDownloadedEpisodes() {
         Log.d(TAG, "getNumberOfDownloadedEpisodes() called with: " + "");
+
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        final int result = adapter.getNumberOfDownloadedEpisodes();
-        adapter.close();
-        return result;
-    }
-
-    /**
-     * Searches the DB for a FeedImage of the given id.
-     *
-     * @param imageId The id of the object
-     * @return The found object
-     */
-    public static FeedImage getFeedImage(final long imageId) {
-        Log.d(TAG, "getFeedImage() called with: " + "imageId = [" + imageId + "]");
-        PodDBAdapter adapter = PodDBAdapter.getInstance();
-        adapter.open();
-        FeedImage result = getFeedImage(adapter, imageId);
-        adapter.close();
-        return result;
-    }
-
-    /**
-     * Searches the DB for a FeedImage of the given id.
-     *
-     * @param imageId The id of the object
-     * @return The found object
-     */
-    private static FeedImage getFeedImage(PodDBAdapter adapter, final long imageId) {
-        return getFeedImages(adapter, imageId).get(imageId);
-    }
-
-    /**
-     * Searches the DB for a FeedImage of the given id.
-     *
-     * @param imageIds The ids of the images
-     * @return Map that associates the id of an image with the image itself
-     */
-    private static Map<Long,FeedImage> getFeedImages(PodDBAdapter adapter, final long... imageIds) {
-        String[] ids = new String[imageIds.length];
-        for(int i=0, len=imageIds.length; i < len; i++) {
-            ids[i] = String.valueOf(imageIds[i]);
-        }
-        Cursor cursor = adapter.getImageCursor(ids);
-        Map<Long, FeedImage> result = new ArrayMap<>(cursor.getCount());
         try {
-            if ((cursor.getCount() == 0) || !cursor.moveToFirst()) {
-                return Collections.emptyMap();
-            }
-            do {
-                FeedImage image = FeedImage.fromCursor(cursor);
-                result.put(image.getId(), image);
-            } while(cursor.moveToNext());
+            return adapter.getNumberOfDownloadedEpisodes();
         } finally {
-            cursor.close();
+            adapter.close();
         }
-        return result;
     }
 
     /**
      * Searches the DB for a FeedMedia of the given id.
      *
      * @param mediaId The id of the object
-     * @return The found object
+     * @return The found object, or null if it does not exist
      */
+    @Nullable
     public static FeedMedia getFeedMedia(final long mediaId) {
         PodDBAdapter adapter = PodDBAdapter.getInstance();
-
         adapter.open();
-        Cursor mediaCursor = adapter.getSingleFeedMediaCursor(mediaId);
 
-        if (!mediaCursor.moveToFirst()) {
-            mediaCursor.close();
-            return null;
-        }
+        try (Cursor mediaCursor = adapter.getSingleFeedMediaCursor(mediaId)) {
+            if (!mediaCursor.moveToFirst()) {
+                return null;
+            }
 
-        int indexFeedItem = mediaCursor.getColumnIndex(PodDBAdapter.KEY_FEEDITEM);
-        long itemId = mediaCursor.getLong(indexFeedItem);
-        FeedMedia media = FeedMedia.fromCursor(mediaCursor);
-        mediaCursor.close();
-
-        if(media != null) {
+            int indexFeedItem = mediaCursor.getColumnIndex(PodDBAdapter.KEY_FEEDITEM);
+            long itemId = mediaCursor.getLong(indexFeedItem);
+            FeedMedia media = FeedMedia.fromCursor(mediaCursor);
             FeedItem item = getFeedItem(itemId);
             if (item != null) {
                 media.setItem(item);
                 item.setMedia(media);
             }
+            return media;
+        } finally {
+            adapter.close();
         }
-
-        adapter.close();
-
-        return media;
     }
 
     /**
-     * Searches the DB for statistics
+     * Searches the DB for statistics.
      *
-     * @return The StatisticsInfo object
+     * @return The list of statistics objects
      */
-    public static StatisticsData getStatistics() {
+    @NonNull
+    public static List<StatisticsItem> getStatistics() {
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
 
-        long totalTime = 0;
         List<StatisticsItem> feedTime = new ArrayList<>();
 
         List<Feed> feeds = getFeedList();
         for (Feed feed : feeds) {
+            long feedPlayedTimeCountAll = 0;
             long feedPlayedTime = 0;
             long feedTotalTime = 0;
             long episodes = 0;
             long episodesStarted = 0;
+            long episodesStartedIncludingMarked = 0;
+            long totalDownloadSize = 0;
             List<FeedItem> items = getFeed(feed.getId()).getItems();
-            for(FeedItem item : items) {
+            for (FeedItem item : items) {
                 FeedMedia media = item.getMedia();
-                if(media == null) {
+                if (media == null) {
                     continue;
                 }
 
-                // played duration used to be reset when the item is added to the playback history
-                if(media.getPlaybackCompletionDate() != null) {
-                    feedPlayedTime += media.getDuration() / 1000;
-                }
                 feedPlayedTime += media.getPlayedDuration() / 1000;
+
+                if (item.isPlayed()) {
+                    feedPlayedTimeCountAll += media.getDuration() / 1000;
+                } else {
+                    feedPlayedTimeCountAll += media.getPosition() / 1000;
+                }
+
                 if (media.getPlaybackCompletionDate() != null || media.getPlayedDuration() > 0) {
                     episodesStarted++;
                 }
+
+                if (item.isPlayed() || media.getPosition() != 0) {
+                    episodesStartedIncludingMarked++;
+                }
+
                 feedTotalTime += media.getDuration() / 1000;
+
+                if (media.isDownloaded()) {
+                    totalDownloadSize = totalDownloadSize + media.getSize();
+                }
+
                 episodes++;
             }
             feedTime.add(new StatisticsItem(
-                    feed, feedTotalTime, feedPlayedTime, episodes, episodesStarted));
-            totalTime += feedPlayedTime;
+                    feed, feedTotalTime, feedPlayedTime, feedPlayedTimeCountAll, episodes,
+                    episodesStarted, episodesStartedIncludingMarked, totalDownloadSize));
         }
-
-        Collections.sort(feedTime, (item1, item2) -> {
-            if(item1.timePlayed > item2.timePlayed) {
-                return -1;
-            } else if(item1.timePlayed < item2.timePlayed) {
-                return 1;
-            } else {
-                return 0;
-            }
-        });
 
         adapter.close();
-        return new StatisticsData(totalTime, feedTime);
-    }
-
-    public static class StatisticsData {
-        public long totalTime;
-        public List<StatisticsItem> feedTime;
-
-        public StatisticsData(long totalTime, List<StatisticsItem> feedTime) {
-            this.totalTime = totalTime;
-            this.feedTime = feedTime;
-        }
-    }
-
-    public static class StatisticsItem {
-        public Feed feed;
-        public long time;
-        public long timePlayed;
-        public long episodes;
-        public long episodesStarted;
-
-        public StatisticsItem(Feed feed, long time, long timePlayed,
-                              long episodes, long episodesStarted) {
-            this.feed = feed;
-            this.time = time;
-            this.timePlayed = timePlayed;
-            this.episodes = episodes;
-            this.episodesStarted = episodesStarted;
-        }
-    }
-
-    /**
-     * Returns the flattr queue as a List of FlattrThings. The list consists of Feeds and FeedItems.
-     *
-     * @return The flattr queue as a List.
-     */
-    public static List<FlattrThing> getFlattrQueue() {
-        Log.d(TAG, "getFlattrQueue() called with: " + "");
-        PodDBAdapter adapter = PodDBAdapter.getInstance();
-        adapter.open();
-        List<FlattrThing> result = new ArrayList<>();
-
-        // load feeds
-        Cursor feedCursor = adapter.getFeedsInFlattrQueueCursor();
-        if (feedCursor.moveToFirst()) {
-            do {
-                result.add(extractFeedFromCursorRow(adapter, feedCursor));
-            } while (feedCursor.moveToNext());
-        }
-        feedCursor.close();
-
-        //load feed items
-        Cursor feedItemCursor = adapter.getFeedItemsInFlattrQueueCursor();
-        result.addAll(extractItemlistFromCursor(adapter, feedItemCursor));
-        feedItemCursor.close();
-
-        adapter.close();
-        Log.d(TAG, "Returning flattrQueueIterator for queue with " + result.size() + " items.");
-        return result;
+        return feedTime;
     }
 
     /**
      * Returns data necessary for displaying the navigation drawer. This includes
      * the list of subscriptions, the number of items in the queue and the number of unread
      * items.
-     *
      */
+    @NonNull
     public static NavDrawerData getNavDrawerData() {
         Log.d(TAG, "getNavDrawerData() called with: " + "");
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
         List<Feed> feeds = getFeedList(adapter);
         long[] feedIds = new long[feeds.size()];
-        for(int i=0; i < feeds.size(); i++) {
+        for (int i = 0; i < feeds.size(); i++) {
             feedIds[i] = feeds.get(i).getId();
         }
         final LongIntMap feedCounters = adapter.getFeedCounters(feedIds);
 
         Comparator<Feed> comparator;
         int feedOrder = UserPreferences.getFeedOrder();
-        if(feedOrder == UserPreferences.FEED_ORDER_COUNTER) {
+        if (feedOrder == UserPreferences.FEED_ORDER_COUNTER) {
             comparator = (lhs, rhs) -> {
                 long counterLhs = feedCounters.get(lhs.getId());
                 long counterRhs = feedCounters.get(rhs.getId());
-                if(counterLhs > counterRhs) {
+                if (counterLhs > counterRhs) {
                     // reverse natural order: podcast with most unplayed episodes first
                     return -1;
-                } else if(counterLhs == counterRhs) {
-                    return lhs.getTitle().compareTo(rhs.getTitle());
+                } else if (counterLhs == counterRhs) {
+                    return lhs.getTitle().compareToIgnoreCase(rhs.getTitle());
                 } else {
                     return 1;
                 }
             };
-        } else if(feedOrder == UserPreferences.FEED_ORDER_ALPHABETICAL) {
+        } else if (feedOrder == UserPreferences.FEED_ORDER_ALPHABETICAL) {
             comparator = (lhs, rhs) -> {
                 String t1 = lhs.getTitle();
                 String t2 = rhs.getTitle();
-                if(t1 == null) {
+                if (t1 == null) {
                     return 1;
-                } else if(t2 == null) {
+                } else if (t2 == null) {
                     return -1;
                 } else {
-                    return t1.toLowerCase().compareTo(t2.toLowerCase());
+                    return t1.compareToIgnoreCase(t2);
+                }
+            };
+        } else if (feedOrder == UserPreferences.FEED_ORDER_MOST_PLAYED) {
+            final LongIntMap playedCounters = adapter.getPlayedEpisodesCounters(feedIds);
+
+            comparator = (lhs, rhs) -> {
+                long counterLhs = playedCounters.get(lhs.getId());
+                long counterRhs = playedCounters.get(rhs.getId());
+                if (counterLhs > counterRhs) {
+                    // podcast with most played episodes first
+                    return -1;
+                } else if (counterLhs == counterRhs) {
+                    return lhs.getTitle().compareToIgnoreCase(rhs.getTitle());
+                } else {
+                    return 1;
                 }
             };
         } else {
             comparator = (lhs, rhs) -> {
-                if(lhs.getItems() == null || lhs.getItems().size() == 0) {
+                if (lhs.getItems() == null || lhs.getItems().size() == 0) {
                     List<FeedItem> items = DBReader.getFeedItemList(lhs);
                     lhs.setItems(items);
                 }
-                if(rhs.getItems() == null || rhs.getItems().size() == 0) {
+                if (rhs.getItems() == null || rhs.getItems().size() == 0) {
                     List<FeedItem> items = DBReader.getFeedItemList(rhs);
                     rhs.setItems(items);
                 }
-                if(lhs.getMostRecentItem() == null) {
+                if (lhs.getMostRecentItem() == null) {
                     return 1;
-                } else if(rhs.getMostRecentItem() == null) {
+                } else if (rhs.getMostRecentItem() == null) {
                     return -1;
                 } else {
                     Date d1 = lhs.getMostRecentItem().getPubDate();
@@ -1114,12 +1010,12 @@ public final class DBReader {
     }
 
     public static class NavDrawerData {
-        public List<Feed> feeds;
-        public int queueSize;
-        public int numNewItems;
-        public int numDownloadedItems;
-        public LongIntMap feedCounters;
-        public int reclaimableSpace;
+        public final List<Feed> feeds;
+        public final int queueSize;
+        public final int numNewItems;
+        public final int numDownloadedItems;
+        public final LongIntMap feedCounters;
+        public final int reclaimableSpace;
 
         public NavDrawerData(List<Feed> feeds,
                              int queueSize,

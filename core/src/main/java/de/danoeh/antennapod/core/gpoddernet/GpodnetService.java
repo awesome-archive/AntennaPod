@@ -1,14 +1,6 @@
 package de.danoeh.antennapod.core.gpoddernet;
 
-import android.support.annotation.NonNull;
-
-import com.squareup.okhttp.Credentials;
-import com.squareup.okhttp.MediaType;
-import com.squareup.okhttp.OkHttpClient;
-import com.squareup.okhttp.Request;
-import com.squareup.okhttp.RequestBody;
-import com.squareup.okhttp.Response;
-import com.squareup.okhttp.ResponseBody;
+import androidx.annotation.NonNull;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -22,6 +14,7 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedList;
@@ -38,6 +31,13 @@ import de.danoeh.antennapod.core.gpoddernet.model.GpodnetTag;
 import de.danoeh.antennapod.core.gpoddernet.model.GpodnetUploadChangesResponse;
 import de.danoeh.antennapod.core.preferences.GpodnetPreferences;
 import de.danoeh.antennapod.core.service.download.AntennapodHttpClient;
+import okhttp3.Credentials;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 /**
  * Communicates with the gpodder.net service.
@@ -570,15 +570,9 @@ public class GpodnetService {
             e.printStackTrace();
             throw new GpodnetServiceException(e);
         } finally {
-            if (response != null && body != null) {
-                try {
-                    body.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    throw new GpodnetServiceException(e);
-                }
+            if (body != null) {
+                body.close();
             }
-
         }
         return responseString;
     }
@@ -594,7 +588,7 @@ public class GpodnetService {
         String result = null;
         ResponseBody body = null;
         try {
-            String credential = Credentials.basic(username, password);
+            String credential = Credentials.basic(username, password, Charset.forName("UTF-8"));
             Request authRequest = request.newBuilder().header("Authorization", credential).build();
             Response response = httpClient.newCall(authRequest).execute();
             checkStatusCode(response);
@@ -605,12 +599,7 @@ public class GpodnetService {
             throw new GpodnetServiceException(e);
         } finally {
             if (body != null) {
-                try {
-                    body.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    throw new GpodnetServiceException(e);
-                }
+                body.close();
             }
         }
         return result;
@@ -619,12 +608,7 @@ public class GpodnetService {
     private String getStringFromResponseBody(@NonNull ResponseBody body)
             throws GpodnetServiceException {
         ByteArrayOutputStream outputStream;
-        int contentLength = 0;
-        try {
-            contentLength = (int) body.contentLength();
-        } catch (IOException ignore) {
-            // ignore
-        }
+        int contentLength = (int) body.contentLength();
         if (contentLength > 0) {
             outputStream = new ByteArrayOutputStream(contentLength);
         } else {

@@ -1,6 +1,6 @@
 package de.danoeh.antennapod.core.gpoddernet.model;
 
-import android.support.v4.util.ArrayMap;
+import androidx.collection.ArrayMap;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -22,9 +22,9 @@ public class GpodnetUploadChangesResponse {
      * URLs that should be updated. The key of the map is the original URL, the value of the map
      * is the sanitized URL.
      */
-    public final Map<String, String> updatedUrls;
+    private final Map<String, String> updatedUrls;
 
-    public GpodnetUploadChangesResponse(long timestamp, Map<String, String> updatedUrls) {
+    private GpodnetUploadChangesResponse(long timestamp, Map<String, String> updatedUrls) {
         this.timestamp = timestamp;
         this.updatedUrls = updatedUrls;
     }

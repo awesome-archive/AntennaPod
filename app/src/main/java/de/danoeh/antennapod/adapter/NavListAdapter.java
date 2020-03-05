@@ -7,7 +7,7 @@ import android.content.res.TypedArray;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.preference.PreferenceManager;
-import android.support.v7.app.AlertDialog;
+import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -15,32 +15,28 @@ import android.widget.BaseAdapter;
 import android.widget.ImageView;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
-
+import androidx.appcompat.app.AlertDialog;
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.request.RequestOptions;
 import com.joanzapata.iconify.Iconify;
 import com.joanzapata.iconify.widget.IconTextView;
-
-import org.apache.commons.lang3.ArrayUtils;
-
-import java.lang.ref.WeakReference;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.activity.MainActivity;
 import de.danoeh.antennapod.core.feed.Feed;
 import de.danoeh.antennapod.core.glide.ApGlideSettings;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 import de.danoeh.antennapod.fragment.AddFeedFragment;
-import de.danoeh.antennapod.fragment.AllEpisodesFragment;
 import de.danoeh.antennapod.fragment.DownloadsFragment;
 import de.danoeh.antennapod.fragment.EpisodesFragment;
-import de.danoeh.antennapod.fragment.NewEpisodesFragment;
 import de.danoeh.antennapod.fragment.PlaybackHistoryFragment;
 import de.danoeh.antennapod.fragment.QueueFragment;
 import de.danoeh.antennapod.fragment.SubscriptionFragment;
+import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import org.apache.commons.lang3.ArrayUtils;
 
 /**
  * BaseAdapter for the navigation drawer
@@ -48,10 +44,10 @@ import de.danoeh.antennapod.fragment.SubscriptionFragment;
 public class NavListAdapter extends BaseAdapter
         implements SharedPreferences.OnSharedPreferenceChangeListener {
 
-    public static final int VIEW_TYPE_COUNT = 3;
+    private static final int VIEW_TYPE_COUNT = 3;
     public static final int VIEW_TYPE_NAV = 0;
     public static final int VIEW_TYPE_SECTION_DIVIDER = 1;
-    public static final int VIEW_TYPE_SUBSCRIPTION = 2;
+    private static final int VIEW_TYPE_SUBSCRIPTION = 2;
 
     /**
      * a tag used as a placeholder to indicate if the subscription list should be displayed or not
@@ -62,8 +58,8 @@ public class NavListAdapter extends BaseAdapter
     private static List<String> tags;
     private static String[] titles;
 
-    private ItemAccess itemAccess;
-    private WeakReference<Activity> activity;
+    private final ItemAccess itemAccess;
+    private final WeakReference<Activity> activity;
     private boolean showSubscriptionList = true;
 
     public NavListAdapter(ItemAccess itemAccess, Activity context) {
@@ -86,9 +82,7 @@ public class NavListAdapter extends BaseAdapter
     private void loadItems() {
         List<String> newTags = new ArrayList<>(Arrays.asList(MainActivity.NAV_DRAWER_TAGS));
         List<String> hiddenFragments = UserPreferences.getHiddenDrawerItems();
-        for(String hidden : hiddenFragments) {
-            newTags.remove(hidden);
-        }
+        newTags.removeAll(hiddenFragments);
 
         if (newTags.contains(SUBSCRIPTION_LIST_TAG)) {
             // we never want SUBSCRIPTION_LIST_TAG to be in 'tags'
@@ -112,7 +106,7 @@ public class NavListAdapter extends BaseAdapter
 
     private Drawable getDrawable(String tag) {
         Activity context = activity.get();
-        if(context == null) {
+        if (context == null) {
             return null;
         }
         int icon;
@@ -120,13 +114,7 @@ public class NavListAdapter extends BaseAdapter
             case QueueFragment.TAG:
                 icon = R.attr.stat_playlist;
                 break;
-            case NewEpisodesFragment.TAG:
-                icon = R.attr.ic_new;
-                break;
             case EpisodesFragment.TAG:
-                icon = R.attr.feed;
-                break;
-            case AllEpisodesFragment.TAG:
                 icon = R.attr.feed;
                 break;
             case DownloadsFragment.TAG:
@@ -214,11 +202,18 @@ public class NavListAdapter extends BaseAdapter
             v = getFeedView(position, convertView, parent);
         }
         if (v != null && viewType != VIEW_TYPE_SECTION_DIVIDER) {
-            TextView txtvTitle = (TextView) v.findViewById(R.id.txtvTitle);
+            TextView txtvTitle = v.findViewById(R.id.txtvTitle);
+            TypedValue typedValue = new TypedValue();
+
             if (position == itemAccess.getSelectedItemIndex()) {
                 txtvTitle.setTypeface(null, Typeface.BOLD);
+                v.getContext().getTheme().resolveAttribute(de.danoeh.antennapod.core.R.attr.drawer_activated_color, typedValue, true);
+                v.setBackgroundResource(typedValue.resourceId);
+
             } else {
                 txtvTitle.setTypeface(null, Typeface.NORMAL);
+                v.getContext().getTheme().resolveAttribute(de.danoeh.antennapod.core.R.attr.nav_drawer_background, typedValue, true);
+                v.setBackgroundResource(typedValue.resourceId);
             }
         }
         return v;
@@ -237,9 +232,9 @@ public class NavListAdapter extends BaseAdapter
 
             convertView = inflater.inflate(R.layout.nav_listitem, parent, false);
 
-            holder.image = (ImageView) convertView.findViewById(R.id.imgvCover);
-            holder.title = (TextView) convertView.findViewById(R.id.txtvTitle);
-            holder.count = (TextView) convertView.findViewById(R.id.txtvCount);
+            holder.image = convertView.findViewById(R.id.imgvCover);
+            holder.title = convertView.findViewById(R.id.txtvTitle);
+            holder.count = convertView.findViewById(R.id.txtvCount);
             convertView.setTag(holder);
         } else {
             holder = (NavHolder) convertView.getTag();
@@ -327,10 +322,10 @@ public class NavListAdapter extends BaseAdapter
 
             convertView = inflater.inflate(R.layout.nav_feedlistitem, parent, false);
 
-            holder.image = (ImageView) convertView.findViewById(R.id.imgvCover);
-            holder.title = (TextView) convertView.findViewById(R.id.txtvTitle);
-            holder.failure = (IconTextView) convertView.findViewById(R.id.itxtvFailure);
-            holder.count = (TextView) convertView.findViewById(R.id.txtvCount);
+            holder.image = convertView.findViewById(R.id.imgvCover);
+            holder.title = convertView.findViewById(R.id.txtvTitle);
+            holder.failure = convertView.findViewById(R.id.itxtvFailure);
+            holder.count = convertView.findViewById(R.id.txtvCount);
             convertView.setTag(holder);
         } else {
             holder = (FeedHolder) convertView.getTag();
@@ -338,11 +333,12 @@ public class NavListAdapter extends BaseAdapter
 
         Glide.with(context)
                 .load(feed.getImageLocation())
-                .placeholder(R.color.light_gray)
-                .error(R.color.light_gray)
-                .diskCacheStrategy(ApGlideSettings.AP_DISK_CACHE_STRATEGY)
-                .fitCenter()
-                .dontAnimate()
+                .apply(new RequestOptions()
+                    .placeholder(R.color.light_gray)
+                    .error(R.color.light_gray)
+                    .diskCacheStrategy(ApGlideSettings.AP_DISK_CACHE_STRATEGY)
+                    .fitCenter()
+                    .dontAnimate())
                 .into(holder.image);
 
         holder.title.setText(feed.getTitle());

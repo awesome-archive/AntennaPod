@@ -1,13 +1,13 @@
 package de.danoeh.antennapod.core.gpoddernet.model;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import java.util.List;
 
 public class GpodnetSubscriptionChange {
-    private List<String> added;
-    private List<String> removed;
-    private long timestamp;
+    private final List<String> added;
+    private final List<String> removed;
+    private final long timestamp;
 
     public GpodnetSubscriptionChange(@NonNull List<String> added,
                                      @NonNull List<String> removed,

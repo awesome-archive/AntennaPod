@@ -2,8 +2,8 @@ package de.danoeh.antennapod.core.service.playback;
 
 import android.content.Context;
 import android.net.wifi.WifiManager;
-import android.support.annotation.NonNull;
-import android.support.annotation.StringRes;
+import androidx.annotation.NonNull;
+import androidx.annotation.StringRes;
 import android.util.Log;
 import android.util.Pair;
 import android.view.SurfaceHolder;
@@ -24,25 +24,26 @@ import de.danoeh.antennapod.core.util.playback.Playable;
  * and remote (cast devices) playback.
  */
 public abstract class PlaybackServiceMediaPlayer {
-    public static final String TAG = "PlaybackSvcMediaPlayer";
+    private static final String TAG = "PlaybackSvcMediaPlayer";
 
     /**
      * Return value of some PSMP methods if the method call failed.
      */
-    public static final int INVALID_TIME = -1;
+    static final int INVALID_TIME = -1;
 
-    protected volatile PlayerStatus playerStatus;
+    private volatile PlayerStatus oldPlayerStatus;
+    volatile PlayerStatus playerStatus;
 
     /**
      * A wifi-lock that is acquired if the media file is being streamed.
      */
     private WifiManager.WifiLock wifiLock;
 
-    protected final PSMPCallback callback;
-    protected final Context context;
+    final PSMPCallback callback;
+    final Context context;
 
-    public PlaybackServiceMediaPlayer(@NonNull Context context,
-                                      @NonNull PSMPCallback callback){
+    PlaybackServiceMediaPlayer(@NonNull Context context,
+                               @NonNull PSMPCallback callback){
         this.context = context;
         this.callback = callback;
 
@@ -147,10 +148,12 @@ public abstract class PlaybackServiceMediaPlayer {
     public abstract boolean canSetSpeed();
 
     /**
-     * Sets the playback speed.
+     * Sets the playback parameters.
+     * - Speed
+     * - SkipSilence (ExoPlayer only)
      * This method is executed on an internal executor service.
      */
-    public abstract void setSpeed(float speed);
+    public abstract void  setPlaybackParams(final float speed, final boolean skipSilence);
 
     /**
      * Returns the current playback speed. If the playback speed could not be retrieved, 1 is returned.
@@ -204,7 +207,7 @@ public abstract class PlaybackServiceMediaPlayer {
      * @return The PSMPInfo object.
      */
     public final synchronized PSMPInfo getPSMPInfo() {
-        return new PSMPInfo(playerStatus, getPlayable());
+        return new PSMPInfo(oldPlayerStatus, playerStatus, getPlayable());
     }
 
     /**
@@ -228,32 +231,35 @@ public abstract class PlaybackServiceMediaPlayer {
     protected abstract void setPlayable(Playable playable);
 
     public void skip() {
-        endPlayback(true, true, true);
+        endPlayback(false, true, true, true);
     }
 
     /**
      * Ends playback of current media (if any) and moves into INDETERMINATE state, unless
      * {@param toStoppedState} is set to true, in which case it moves into STOPPED state.
      *
-     * @see #endPlayback(boolean, boolean, boolean)
+     * @see #endPlayback(boolean, boolean, boolean, boolean)
      */
     public Future<?> stopPlayback(boolean toStoppedState) {
-        return endPlayback(true, false, toStoppedState);
+        return endPlayback(false, false, false, toStoppedState);
     }
 
     /**
      * Internal method that handles end of playback.
      *
-     * Currently, it has 4 use cases:
+     * Currently, it has 5 use cases:
      * <ul>
-     * <li>Media playback has completed: call with (false, true, true)</li>
-     * <li>User asks to skip to next episode: call with (true, true, true)</li>
-     * <li>Stopping the media player: call with (true, false, true)</li>
-     * <li>We want to change the media player implementation: call with (true, false, false)</li>
+     * <li>Media playback has completed: call with (true, false, true, true)</li>
+     * <li>User asks to skip to next episode: call with (false, true, true, true)</li>
+     * <li>Skipping to next episode due to playback error: call with (false, false, true, true)</li>
+     * <li>Stopping the media player: call with (false, false, false, true)</li>
+     * <li>We want to change the media player implementation: call with (false, false, false, false)</li>
      * </ul>
      *
-     * @param wasSkipped       If true, we assume the current media's playback has ended, for
+     * @param hasEnded         If true, we assume the current media's playback has ended, for
      *                         purposes of post playback processing.
+     * @param wasSkipped       Whether the user chose to skip the episode (by pressing the skip
+     *                         button).
      * @param shouldContinue   If true, the media player should try to load, and possibly play,
      *                         the next item, based on the user preferences and whether such item
      *                         exists.
@@ -264,17 +270,18 @@ public abstract class PlaybackServiceMediaPlayer {
      *
      * @return a Future, just for the purpose of tracking its execution.
      */
-    protected abstract Future<?> endPlayback(boolean wasSkipped, boolean shouldContinue, boolean toStoppedState);
+    protected abstract Future<?> endPlayback(boolean hasEnded, boolean wasSkipped,
+                                             boolean shouldContinue, boolean toStoppedState);
 
     /**
      * @return {@code true} if the WifiLock feature should be used, {@code false} otherwise.
      */
     protected abstract boolean shouldLockWifi();
 
-    protected final synchronized void acquireWifiLockIfNecessary() {
+    final synchronized void acquireWifiLockIfNecessary() {
         if (shouldLockWifi()) {
             if (wifiLock == null) {
-                wifiLock = ((WifiManager) context.getSystemService(Context.WIFI_SERVICE))
+                wifiLock = ((WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE))
                         .createWifiLock(WifiManager.WIFI_MODE_FULL, TAG);
                 wifiLock.setReferenceCounted(false);
             }
@@ -282,7 +289,7 @@ public abstract class PlaybackServiceMediaPlayer {
         }
     }
 
-    protected final synchronized void releaseWifiLockIfNecessary() {
+    final synchronized void releaseWifiLockIfNecessary() {
         if (wifiLock != null && wifiLock.isHeld()) {
             wifiLock.release();
         }
@@ -303,29 +310,28 @@ public abstract class PlaybackServiceMediaPlayer {
      * @param position  The position to be set to the current Playable object in case playback started or paused.
      *                  Will be ignored if given the value of {@link #INVALID_TIME}.
      */
-    protected final synchronized void setPlayerStatus(@NonNull PlayerStatus newStatus, Playable newMedia, int position) {
+    final synchronized void setPlayerStatus(@NonNull PlayerStatus newStatus, Playable newMedia, int position) {
         Log.d(TAG, this.getClass().getSimpleName() + ": Setting player status to " + newStatus);
 
-        PlayerStatus oldStatus = playerStatus;
-
+        this.oldPlayerStatus = playerStatus;
         this.playerStatus = newStatus;
         setPlayable(newMedia);
 
         if (newMedia != null && newStatus != PlayerStatus.INDETERMINATE) {
-            if (oldStatus == PlayerStatus.PLAYING && newStatus != PlayerStatus.PLAYING) {
+            if (oldPlayerStatus == PlayerStatus.PLAYING && newStatus != PlayerStatus.PLAYING) {
                 callback.onPlaybackPause(newMedia, position);
-            } else if (oldStatus != PlayerStatus.PLAYING && newStatus == PlayerStatus.PLAYING) {
+            } else if (oldPlayerStatus != PlayerStatus.PLAYING && newStatus == PlayerStatus.PLAYING) {
                 callback.onPlaybackStart(newMedia, position);
             }
         }
 
-        callback.statusChanged(new PSMPInfo(playerStatus, getPlayable()));
+        callback.statusChanged(new PSMPInfo(oldPlayerStatus, playerStatus, getPlayable()));
     }
 
     /**
      * @see #setPlayerStatus(PlayerStatus, Playable, int)
      */
-    protected final void setPlayerStatus(@NonNull PlayerStatus newStatus, Playable newMedia) {
+    final void setPlayerStatus(@NonNull PlayerStatus newStatus, Playable newMedia) {
         setPlayerStatus(newStatus, newMedia, INVALID_TIME);
     }
 
@@ -346,7 +352,7 @@ public abstract class PlaybackServiceMediaPlayer {
 
         boolean onMediaPlayerError(Object inObj, int what, int extra);
 
-        void onPostPlayback(@NonNull Playable media, boolean ended, boolean playingNext);
+        void onPostPlayback(@NonNull Playable media, boolean ended, boolean skipped, boolean playingNext);
 
         void onPlaybackStart(@NonNull Playable playable, int position);
 
@@ -361,10 +367,12 @@ public abstract class PlaybackServiceMediaPlayer {
      * Holds information about a PSMP object.
      */
     public static class PSMPInfo {
+        public final PlayerStatus oldPlayerStatus;
         public PlayerStatus playerStatus;
         public Playable playable;
 
-        public PSMPInfo(PlayerStatus playerStatus, Playable playable) {
+        PSMPInfo(PlayerStatus oldPlayerStatus, PlayerStatus playerStatus, Playable playable) {
+            this.oldPlayerStatus = oldPlayerStatus;
             this.playerStatus = playerStatus;
             this.playable = playable;
         }

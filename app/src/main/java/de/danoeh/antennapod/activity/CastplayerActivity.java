@@ -13,9 +13,9 @@ import de.danoeh.antennapod.core.service.playback.PlaybackService;
  * Activity for controlling the remote playback on a Cast device.
  */
 public class CastplayerActivity extends MediaplayerInfoActivity {
-    public static final String TAG = "CastPlayerActivity";
+    private static final String TAG = "CastPlayerActivity";
 
-    private AtomicBoolean isSetup = new AtomicBoolean(false);
+    private final AtomicBoolean isSetup = new AtomicBoolean(false);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -49,6 +49,7 @@ public class CastplayerActivity extends MediaplayerInfoActivity {
         super.setupGUI();
         if (butPlaybackSpeed != null) {
             butPlaybackSpeed.setVisibility(View.GONE);
+            txtvPlaybackSpeed.setVisibility(View.GONE);
         }
 //        if (butCastDisconnect != null) {
 //            butCastDisconnect.setOnClickListener(v -> castManager.disconnect());

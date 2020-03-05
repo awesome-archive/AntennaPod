@@ -1,7 +1,7 @@
 package de.danoeh.antennapod.core.event;
 
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
@@ -17,7 +17,8 @@ public class FeedItemEvent {
         UPDATE, DELETE_MEDIA
     }
 
-    @NonNull public final Action action;
+    @NonNull
+    private final Action action;
     @NonNull public final List<FeedItem> items;
 
     private FeedItemEvent(Action action, List<FeedItem> items) {

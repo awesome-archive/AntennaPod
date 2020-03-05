@@ -3,8 +3,10 @@ package de.danoeh.antennapod.core.service.download;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import android.text.TextUtils;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import de.danoeh.antennapod.core.feed.FeedFile;
 import de.danoeh.antennapod.core.util.URLChecker;
@@ -17,15 +19,16 @@ public class DownloadRequest implements Parcelable {
     private String username;
     private String password;
     private String lastModified;
-    private boolean deleteOnFailure;
+    private final boolean deleteOnFailure;
     private final long feedfileId;
     private final int feedfileType;
     private final Bundle arguments;
 
-    protected int progressPercent;
-    protected long soFar;
-    protected long size;
-    protected int statusMsg;
+    private int progressPercent;
+    private long soFar;
+    private long size;
+    private int statusMsg;
+    private boolean mediaEnqueued;
 
     public DownloadRequest(@NonNull String destination,
                            @NonNull String source,
@@ -45,6 +48,7 @@ public class DownloadRequest implements Parcelable {
         this.username = username;
         this.password = password;
         this.deleteOnFailure = deleteOnFailure;
+        this.mediaEnqueued = false;
         this.arguments = (arguments != null) ? arguments : new Bundle();
     }
 
@@ -53,7 +57,7 @@ public class DownloadRequest implements Parcelable {
         this(destination, source, title, feedfileId, feedfileType, null, null, true, null);
     }
 
-    public DownloadRequest(Builder builder) {
+    private DownloadRequest(Builder builder) {
         this.destination = builder.destination;
         this.source = builder.source;
         this.title = builder.title;
@@ -74,17 +78,10 @@ public class DownloadRequest implements Parcelable {
         feedfileType = in.readInt();
         lastModified = in.readString();
         deleteOnFailure = (in.readByte() > 0);
+        username = nullIfEmpty(in.readString());
+        password = nullIfEmpty(in.readString());
+        mediaEnqueued = (in.readByte() > 0);
         arguments = in.readBundle();
-        if (in.dataAvail() > 0) {
-            username = in.readString();
-        } else {
-            username = null;
-        }
-        if (in.dataAvail() > 0) {
-            password = in.readString();
-        } else {
-            password = null;
-        }
     }
 
     @Override
@@ -101,13 +98,23 @@ public class DownloadRequest implements Parcelable {
         dest.writeInt(feedfileType);
         dest.writeString(lastModified);
         dest.writeByte((deleteOnFailure) ? (byte) 1 : 0);
+        // in case of null username/password, still write an empty string
+        // (rather than skipping it). Otherwise, unmarshalling  a collection
+        // of them from a Parcel (from an Intent extra to submit a request to DownloadService) will fail.
+        //
+        // see: https://stackoverflow.com/a/22926342
+        dest.writeString(nonNullString(username));
+        dest.writeString(nonNullString(password));
+        dest.writeByte((mediaEnqueued) ? (byte) 1 : 0);
         dest.writeBundle(arguments);
-        if (username != null) {
-            dest.writeString(username);
-        }
-        if (password != null) {
-            dest.writeString(password);
-        }
+    }
+
+    private static String nonNullString(String str) {
+        return str != null ? str : "";
+    }
+
+    private static String nullIfEmpty(String str) {
+        return TextUtils.isEmpty(str) ? null : str;
     }
 
     public static final Parcelable.Creator<DownloadRequest> CREATOR = new Parcelable.Creator<DownloadRequest>() {
@@ -124,7 +131,7 @@ public class DownloadRequest implements Parcelable {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (o == null || !(o instanceof DownloadRequest)) return false;
 
         DownloadRequest that = (DownloadRequest) o;
 
@@ -145,6 +152,7 @@ public class DownloadRequest implements Parcelable {
         if (title != null ? !title.equals(that.title) : that.title != null) return false;
         if (username != null ? !username.equals(that.username) : that.username != null)
             return false;
+        if (mediaEnqueued != that.mediaEnqueued) return false;
         return true;
     }
 
@@ -164,6 +172,7 @@ public class DownloadRequest implements Parcelable {
         result = 31 * result + (int) (soFar ^ (soFar >>> 32));
         result = 31 * result + (int) (size ^ (size >>> 32));
         result = 31 * result + statusMsg;
+        result = 31 * result + (mediaEnqueued ? 1 : 0);
         return result;
     }
 
@@ -211,10 +220,6 @@ public class DownloadRequest implements Parcelable {
         this.size = size;
     }
 
-    public int getStatusMsg() {
-        return statusMsg;
-    }
-
     public void setStatusMsg(int statusMsg) {
         this.statusMsg = statusMsg;
     }
@@ -249,20 +254,32 @@ public class DownloadRequest implements Parcelable {
         return deleteOnFailure;
     }
 
+    public boolean isMediaEnqueued() {
+        return mediaEnqueued;
+    }
+
+    /**
+     * Set to true if the media is enqueued because of this download.
+     * The state is helpful if the download is cancelled, and undoing the enqueue is needed.
+     */
+    public void setMediaEnqueued(boolean mediaEnqueued) {
+        this.mediaEnqueued = mediaEnqueued;
+    }
+
     public Bundle getArguments() {
         return arguments;
     }
 
     public static class Builder {
-        private String destination;
-        private String source;
-        private String title;
+        private final String destination;
+        private final String source;
+        private final String title;
         private String username;
         private String password;
         private String lastModified;
         private boolean deleteOnFailure = false;
-        private long feedfileId;
-        private int feedfileType;
+        private final long feedfileId;
+        private final int feedfileType;
         private Bundle arguments;
 
         public Builder(@NonNull String destination, @NonNull FeedFile item) {

@@ -1,6 +1,6 @@
 package de.danoeh.antennapod.core.gpoddernet.model;
 
-import android.support.v4.util.ArrayMap;
+import androidx.collection.ArrayMap;
 
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
@@ -21,9 +21,9 @@ public class GpodnetEpisodeActionPostResponse {
      * URLs that should be updated. The key of the map is the original URL, the value of the map
      * is the sanitized URL.
      */
-    public final Map<String, String> updatedUrls;
+    private final Map<String, String> updatedUrls;
 
-    public GpodnetEpisodeActionPostResponse(long timestamp, Map<String, String> updatedUrls) {
+    private GpodnetEpisodeActionPostResponse(long timestamp, Map<String, String> updatedUrls) {
         this.timestamp = timestamp;
         this.updatedUrls = updatedUrls;
     }

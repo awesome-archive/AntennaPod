@@ -1,7 +1,7 @@
 package de.danoeh.antennapod.core.util.syndication;
 
 import android.net.Uri;
-import android.support.v4.util.ArrayMap;
+import androidx.collection.ArrayMap;
 import android.text.TextUtils;
 
 import org.jsoup.Jsoup;
@@ -41,7 +41,7 @@ public class FeedDiscoverer {
      * @return A map which contains the feed URLs as keys and titles as values (the feed URL is also used as a title if
      * a title cannot be found).
      */
-    public Map<String, String> findLinks(String in, String baseUrl) throws IOException {
+    public Map<String, String> findLinks(String in, String baseUrl) {
         return findLinks(Jsoup.parse(in), baseUrl);
     }
 

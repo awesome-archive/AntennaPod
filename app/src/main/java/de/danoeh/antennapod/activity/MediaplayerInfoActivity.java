@@ -6,16 +6,16 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.os.Build;
-import android.support.annotation.Nullable;
-import android.support.design.widget.AppBarLayout;
-import android.support.design.widget.Snackbar;
-import android.support.v4.app.Fragment;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.app.FragmentStatePagerAdapter;
-import android.support.v4.view.ViewPager;
-import android.support.v4.widget.DrawerLayout;
-import android.support.v7.app.ActionBarDrawerToggle;
-import android.support.v7.widget.Toolbar;
+import android.os.Bundle;
+import com.google.android.material.appbar.AppBarLayout;
+import com.google.android.material.snackbar.Snackbar;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
+import androidx.fragment.app.FragmentStatePagerAdapter;
+import androidx.viewpager.widget.ViewPager;
+import androidx.drawerlayout.widget.DrawerLayout;
+import androidx.appcompat.app.ActionBarDrawerToggle;
+import androidx.appcompat.widget.Toolbar;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.ContextMenu;
@@ -23,30 +23,28 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.AdapterView;
-import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.ListView;
+import android.widget.TextView;
 import android.widget.Toast;
-
-import com.viewpagerindicator.CirclePageIndicator;
 
 import java.util.List;
 
 import de.danoeh.antennapod.R;
-import de.danoeh.antennapod.adapter.ChaptersListAdapter;
 import de.danoeh.antennapod.adapter.NavListAdapter;
 import de.danoeh.antennapod.core.asynctask.FeedRemover;
 import de.danoeh.antennapod.core.dialog.ConfirmationDialog;
+import de.danoeh.antennapod.core.event.FeedListUpdateEvent;
 import de.danoeh.antennapod.core.event.MessageEvent;
-import de.danoeh.antennapod.core.feed.EventDistributor;
+import de.danoeh.antennapod.core.feed.Chapter;
 import de.danoeh.antennapod.core.feed.Feed;
 import de.danoeh.antennapod.core.feed.FeedMedia;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 import de.danoeh.antennapod.core.service.playback.PlaybackService;
 import de.danoeh.antennapod.core.service.playback.PlayerStatus;
 import de.danoeh.antennapod.core.storage.DBReader;
-import de.danoeh.antennapod.core.storage.DBTasks;
 import de.danoeh.antennapod.core.storage.DBWriter;
+import de.danoeh.antennapod.core.util.IntentUtils;
 import de.danoeh.antennapod.core.util.playback.Playable;
 import de.danoeh.antennapod.core.util.playback.PlaybackController;
 import de.danoeh.antennapod.dialog.RenameFeedDialog;
@@ -60,28 +58,31 @@ import de.danoeh.antennapod.fragment.PlaybackHistoryFragment;
 import de.danoeh.antennapod.fragment.QueueFragment;
 import de.danoeh.antennapod.fragment.SubscriptionFragment;
 import de.danoeh.antennapod.menuhandler.NavDrawerActivity;
-import de.danoeh.antennapod.preferences.PreferenceController;
-import de.greenrobot.event.EventBus;
-import rx.Observable;
-import rx.Subscription;
-import rx.android.schedulers.AndroidSchedulers;
-import rx.schedulers.Schedulers;
+import de.danoeh.antennapod.view.PagerIndicatorView;
+import de.danoeh.antennapod.view.PlaybackSpeedIndicatorView;
+import io.reactivex.Observable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.disposables.Disposable;
+import io.reactivex.schedulers.Schedulers;
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 
 /**
  * Activity for playing files that do not require a video surface.
  */
 public abstract class MediaplayerInfoActivity extends MediaplayerActivity implements NavDrawerActivity {
 
+    private static final String TAG = "MediaplayerInfoActivity";
+
     private static final int POS_COVER = 0;
     private static final int POS_DESCR = 1;
     private static final int POS_CHAPTERS = 2;
     private static final int NUM_CONTENT_FRAGMENTS = 3;
 
-    final String TAG = "MediaplayerInfoActivity";
     private static final String PREFS = "AudioPlayerActivityPreferences";
     private static final String PREF_KEY_SELECTED_FRAGMENT_POSITION = "selectedFragmentPosition";
 
-    public static final String[] NAV_DRAWER_TAGS = {
+    private static final String[] NAV_DRAWER_TAGS = {
             QueueFragment.TAG,
             EpisodesFragment.TAG,
             SubscriptionFragment.TAG,
@@ -91,8 +92,9 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
             NavListAdapter.SUBSCRIPTION_LIST_TAG
     };
 
-    protected Button butPlaybackSpeed;
-    protected ImageButton butCastDisconnect;
+    PlaybackSpeedIndicatorView butPlaybackSpeed;
+    TextView txtvPlaybackSpeed;
+    ImageButton butCastDisconnect;
     private DrawerLayout drawerLayout;
     private NavListAdapter navAdapter;
     private ListView navList;
@@ -100,29 +102,25 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
     private ActionBarDrawerToggle drawerToggle;
     private int mPosition = -1;
 
-    private Playable media;
     private ViewPager pager;
+    private PagerIndicatorView pageIndicator;
     private MediaplayerInfoPagerAdapter pagerAdapter;
 
-    private Subscription subscription;
+    private Disposable disposable;
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        EventBus.getDefault().unregister(this);
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        supportPostponeEnterTransition();
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         Log.d(TAG, "onStop()");
-        if(pagerAdapter != null) {
-            pagerAdapter.setController(null);
+        if (disposable != null) {
+            disposable.dispose();
         }
-        if(subscription != null) {
-            subscription.unsubscribe();
-        }
-        EventDistributor.getInstance().unregister(contentUpdate);
         saveCurrentFragment();
     }
 
@@ -145,7 +143,7 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
         setTheme(UserPreferences.getNoTitleTheme());
     }
 
-    protected void saveCurrentFragment() {
+    void saveCurrentFragment() {
         if(pager == null) {
             return;
         }
@@ -153,7 +151,7 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         prefs.edit()
                 .putInt(PREF_KEY_SELECTED_FRAGMENT_POSITION, pager.getCurrentItem())
-                .commit();
+                .apply();
     }
 
     @Override
@@ -172,17 +170,8 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        if(pagerAdapter != null && controller != null && controller.getMedia() != media) {
-            media = controller.getMedia();
-            pagerAdapter.onMediaChanged(media);
-            pagerAdapter.setController(controller);
-        }
-        DBTasks.checkShouldRefreshFeeds(getApplicationContext());
-
-        EventDistributor.getInstance().register(contentUpdate);
-        EventBus.getDefault().register(this);
+    protected void onStart() {
+        super.onStart();
         loadData();
     }
 
@@ -219,23 +208,17 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
     @Override
     protected void setupGUI() {
         super.setupGUI();
-        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
+        Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         getSupportActionBar().setTitle("");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            findViewById(R.id.shadow).setVisibility(View.GONE);
-            AppBarLayout appBarLayout = (AppBarLayout) findViewById(R.id.appBar);
-            float px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 4, getResources().getDisplayMetrics());
-            appBarLayout.setElevation(px);
-        }
-        drawerLayout = (DrawerLayout) findViewById(R.id.drawer_layout);
-        navList = (ListView) findViewById(R.id.nav_list);
+        drawerLayout = findViewById(R.id.drawer_layout);
+        navList = findViewById(R.id.nav_list);
         navDrawer = findViewById(R.id.nav_layout);
 
         drawerToggle = new ActionBarDrawerToggle(this, drawerLayout, R.string.drawer_open, R.string.drawer_close);
         drawerToggle.setDrawerIndicatorEnabled(false);
-        drawerLayout.setDrawerListener(drawerToggle);
+        drawerLayout.addDrawerListener(drawerToggle);
 
         navAdapter = new NavListAdapter(itemAccess, this);
         navList.setAdapter(navAdapter);
@@ -263,51 +246,35 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
 
         findViewById(R.id.nav_settings).setOnClickListener(v -> {
             drawerLayout.closeDrawer(navDrawer);
-            startActivity(new Intent(MediaplayerInfoActivity.this, PreferenceController.getPreferenceActivity()));
+            startActivity(new Intent(MediaplayerInfoActivity.this, PreferenceActivity.class));
         });
 
-        butPlaybackSpeed = (Button) findViewById(R.id.butPlaybackSpeed);
-        butCastDisconnect = (ImageButton) findViewById(R.id.butCastDisconnect);
+        butPlaybackSpeed = findViewById(R.id.butPlaybackSpeed);
+        txtvPlaybackSpeed = findViewById(R.id.txtvPlaybackSpeed);
+        butCastDisconnect = findViewById(R.id.butCastDisconnect);
 
-        pager = (ViewPager) findViewById(R.id.pager);
-        pagerAdapter = new MediaplayerInfoPagerAdapter(getSupportFragmentManager(), media);
-        pagerAdapter.setController(controller);
+        pager = findViewById(R.id.pager);
+        pager.setOffscreenPageLimit(3);
+        pagerAdapter = new MediaplayerInfoPagerAdapter(getSupportFragmentManager());
         pager.setAdapter(pagerAdapter);
-        CirclePageIndicator pageIndicator = (CirclePageIndicator) findViewById(R.id.page_indicator);
+        pageIndicator = findViewById(R.id.page_indicator);
         pageIndicator.setViewPager(pager);
+        pageIndicator.setOnClickListener(v
+                -> pager.setCurrentItem((pager.getCurrentItem() + 1) % pager.getChildCount()));
         loadLastFragment();
         pager.onSaveInstanceState();
+
+        navList.post(this::supportStartPostponedEnterTransition);
     }
 
     @Override
-    protected void onPositionObserverUpdate() {
-        super.onPositionObserverUpdate();
-        notifyMediaPositionChanged();
-    }
-
-    @Override
-    protected boolean loadMediaInfo() {
-        if (!super.loadMediaInfo()) {
-            return false;
+    boolean loadMediaInfo() {
+        if (controller != null && controller.getMedia() != null) {
+            List<Chapter> chapters = controller.getMedia().getChapters();
+            boolean hasChapters = chapters != null && !chapters.isEmpty();
+            pageIndicator.setDisabledPage(hasChapters ? -1 : 2);
         }
-        if(controller != null && controller.getMedia() != media) {
-            media = controller.getMedia();
-            pagerAdapter.onMediaChanged(media);
-        }
-        return true;
-    }
-
-    public void notifyMediaPositionChanged() {
-        if(pagerAdapter == null) {
-            return;
-        }
-        ChaptersFragment chaptersFragment = pagerAdapter.getChaptersFragment();
-        if(chaptersFragment != null) {
-            ChaptersListAdapter adapter = (ChaptersListAdapter) chaptersFragment.getListAdapter();
-            if (adapter != null) {
-                adapter.notifyDataSetChanged();
-            }
-        }
+        return super.loadMediaInfo();
     }
 
     @Override
@@ -347,7 +314,7 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        return drawerToggle != null && drawerToggle.onOptionsItemSelected(item) || super.onOptionsItemSelected(item);
+        return (drawerToggle != null && drawerToggle.onOptionsItemSelected(item)) || super.onOptionsItemSelected(item);
     }
 
     @Override
@@ -377,8 +344,8 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
         }
         Feed feed = navDrawerData.feeds.get(position - navAdapter.getSubscriptionOffset());
         switch(item.getItemId()) {
-            case R.id.mark_all_seen_item:
-                DBWriter.markFeedSeen(feed.getId());
+            case R.id.remove_all_new_flags_item:
+                DBWriter.removeFeedNewFlag(feed.getId());
                 return true;
             case R.id.mark_all_read_item:
                 DBWriter.markFeedRead(feed.getId());
@@ -387,15 +354,10 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
                 new RenameFeedDialog(this, feed).show();
                 return true;
             case R.id.remove_item:
-                final FeedRemover remover = new FeedRemover(this, feed) {
-                    @Override
-                    protected void onPostExecute(Void result) {
-                        super.onPostExecute(result);
-                    }
-                };
+                final FeedRemover remover = new FeedRemover(this, feed);
                 ConfirmationDialog conDialog = new ConfirmationDialog(this,
                         R.string.remove_feed_label,
-                        R.string.feed_delete_confirmation_msg) {
+                        getString(R.string.feed_delete_confirmation_msg, feed.getTitle())) {
                     @Override
                     public void onConfirmButtonPressed(
                             DialogInterface dialog) {
@@ -404,12 +366,12 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
                             Playable playable = controller.getMedia();
                             if (playable != null && playable instanceof FeedMedia) {
                                 FeedMedia media = (FeedMedia) playable;
-                                if (media.getItem().getFeed().getId() == feed.getId()) {
+                                if (media.getItem() != null && media.getItem().getFeed() != null &&
+                                        media.getItem().getFeed().getId() == feed.getId()) {
                                     Log.d(TAG, "Currently playing episode is about to be deleted, skipping");
                                     remover.skipOnCompletion = true;
                                     if(controller.getStatus() == PlayerStatus.PLAYING) {
-                                        sendBroadcast(new Intent(
-                                                PlaybackService.ACTION_PAUSE_PLAY_CURRENT_EPISODE));
+                                        IntentUtils.sendLocalBroadcast(MediaplayerInfoActivity.this, PlaybackService.ACTION_PAUSE_PLAY_CURRENT_EPISODE);
                                     }
                                 }
                             }
@@ -438,7 +400,7 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
         }
     }
 
-    public void showDrawerPreferencesDialog() {
+    private void showDrawerPreferencesDialog() {
         final List<String> hiddenDrawerItems = UserPreferences.getHiddenDrawerItems();
         String[] navLabels = new String[NAV_DRAWER_TAGS.length];
         final boolean[] checked = new boolean[NAV_DRAWER_TAGS.length];
@@ -467,8 +429,8 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
     private DBReader.NavDrawerData navDrawerData;
 
     private void loadData() {
-        subscription = Observable.fromCallable(DBReader::getNavDrawerData)
-                .subscribeOn(Schedulers.newThread())
+        disposable = Observable.fromCallable(DBReader::getNavDrawerData)
+                .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(result -> {
                     navDrawerData = result;
@@ -478,28 +440,21 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
                 }, error -> Log.e(TAG, Log.getStackTraceString(error)));
     }
 
+    @Subscribe(threadMode = ThreadMode.MAIN)
     public void onEventMainThread(MessageEvent event) {
         Log.d(TAG, "onEvent(" + event + ")");
         View parentLayout = findViewById(R.id.drawer_layout);
         Snackbar snackbar = Snackbar.make(parentLayout, event.message, Snackbar.LENGTH_SHORT);
         if (event.action != null) {
-            snackbar.setAction(getString(R.string.undo), v -> {
-                event.action.run();
-            });
+            snackbar.setAction(getString(R.string.undo), v -> event.action.run());
         }
         snackbar.show();
     }
 
-    private EventDistributor.EventListener contentUpdate = new EventDistributor.EventListener() {
-
-        @Override
-        public void update(EventDistributor eventDistributor, Integer arg) {
-            if ((EventDistributor.FEED_LIST_UPDATE & arg) != 0) {
-                Log.d(TAG, "Received contentUpdate Intent.");
-                loadData();
-            }
-        }
-    };
+    @Subscribe
+    public void onFeedListChanged(FeedListUpdateEvent event) {
+        loadData();
+    }
 
     private final NavListAdapter.ItemAccess itemAccess = new NavListAdapter.ItemAccess() {
         @Override
@@ -563,50 +518,11 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
         }
     };
 
-    public interface MediaplayerInfoContentFragment {
-        void onMediaChanged(Playable media);
-    }
-
     private static class MediaplayerInfoPagerAdapter extends FragmentStatePagerAdapter {
-
         private static final String TAG = "MPInfoPagerAdapter";
 
-        private Playable media;
-        private PlaybackController controller;
-
-        public MediaplayerInfoPagerAdapter(FragmentManager fm, Playable media) {
+        public MediaplayerInfoPagerAdapter(FragmentManager fm) {
             super(fm);
-            this.media = media;
-        }
-
-        private CoverFragment coverFragment;
-        private ItemDescriptionFragment itemDescriptionFragment;
-        private ChaptersFragment chaptersFragment;
-
-        public void onMediaChanged(Playable media) {
-            Log.d(TAG, "media changing to " + ((media != null) ? media.getEpisodeTitle() : "null"));
-            this.media = media;
-            if(coverFragment != null) {
-                coverFragment.onMediaChanged(media);
-            }
-            if(itemDescriptionFragment != null) {
-                itemDescriptionFragment.onMediaChanged(media);
-            }
-            if(chaptersFragment != null) {
-                chaptersFragment.onMediaChanged(media);
-            }
-        }
-
-        public void setController(PlaybackController controller) {
-            this.controller = controller;
-            if(chaptersFragment != null) {
-                chaptersFragment.setController(controller);
-            }
-        }
-
-        @Nullable
-        public ChaptersFragment getChaptersFragment() {
-            return chaptersFragment;
         }
 
         @Override
@@ -614,21 +530,11 @@ public abstract class MediaplayerInfoActivity extends MediaplayerActivity implem
             Log.d(TAG, "getItem(" + position + ")");
             switch (position) {
                 case POS_COVER:
-                    if(coverFragment == null) {
-                        coverFragment = CoverFragment.newInstance(media);
-                    }
-                    return coverFragment;
+                    return new CoverFragment();
                 case POS_DESCR:
-                    if(itemDescriptionFragment == null) {
-                        itemDescriptionFragment = ItemDescriptionFragment.newInstance(media, true, true);
-                    }
-                    return itemDescriptionFragment;
+                    return new ItemDescriptionFragment();
                 case POS_CHAPTERS:
-                    if(chaptersFragment == null) {
-                        chaptersFragment = ChaptersFragment.newInstance(media);
-                        chaptersFragment.setController(controller);
-                    }
-                    return chaptersFragment;
+                    return new ChaptersFragment();
                 default:
                     return null;
             }

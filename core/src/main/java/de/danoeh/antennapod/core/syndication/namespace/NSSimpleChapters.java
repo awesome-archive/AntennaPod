@@ -17,17 +17,17 @@ public class NSSimpleChapters extends Namespace {
     public static final String NSTAG = "psc|sc";
     public static final String NSURI = "http://podlove.org/simple-chapters";
 
-    public static final String CHAPTERS = "chapters";
-    public static final String CHAPTER = "chapter";
-    public static final String START = "start";
-    public static final String TITLE = "title";
-    public static final String HREF = "href";
+    private static final String CHAPTERS = "chapters";
+    private static final String CHAPTER = "chapter";
+    private static final String START = "start";
+    private static final String TITLE = "title";
+    private static final String HREF = "href";
+    private static final String IMAGE = "image";
 
     @Override
-    public SyndElement handleElementStart(String localName, HandlerState state,
-                                          Attributes attributes) {
+    public SyndElement handleElementStart(String localName, HandlerState state, Attributes attributes) {
         FeedItem currentItem = state.getCurrentItem();
-        if(currentItem != null) {
+        if (currentItem != null) {
             if (localName.equals(CHAPTERS)) {
                 currentItem.setChapters(new ArrayList<>());
             } else if (localName.equals(CHAPTER)) {
@@ -35,7 +35,8 @@ public class NSSimpleChapters extends Namespace {
                     long start = DateUtils.parseTimeString(attributes.getValue(START));
                     String title = attributes.getValue(TITLE);
                     String link = attributes.getValue(HREF);
-                    SimpleChapter chapter = new SimpleChapter(start, title, currentItem, link);
+                    String imageUrl = attributes.getValue(IMAGE);
+                    SimpleChapter chapter = new SimpleChapter(start, title, link, imageUrl);
                     currentItem.getChapters().add(chapter);
                 } catch (NumberFormatException e) {
                     Log.e(TAG, "Unable to read chapter", e);

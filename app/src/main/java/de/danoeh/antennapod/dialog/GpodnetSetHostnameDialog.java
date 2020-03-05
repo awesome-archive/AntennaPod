@@ -1,13 +1,14 @@
 package de.danoeh.antennapod.dialog;
 
 import android.content.Context;
-import android.support.v7.app.AlertDialog;
+import androidx.appcompat.app.AlertDialog;
 import android.text.Editable;
 import android.text.InputType;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.core.gpoddernet.GpodnetService;
 import de.danoeh.antennapod.core.preferences.GpodnetPreferences;
@@ -16,6 +17,9 @@ import de.danoeh.antennapod.core.preferences.GpodnetPreferences;
  * Creates a dialog that lets the user change the hostname for the gpodder.net service.
  */
 public class GpodnetSetHostnameDialog {
+
+    private GpodnetSetHostnameDialog(){}
+
     private static final String TAG = "GpodnetSetHostnameDialog";
 
     public static AlertDialog createDialog(final Context context) {

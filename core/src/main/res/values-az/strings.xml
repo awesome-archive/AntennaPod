@@ -41,7 +41,6 @@
   <string name="mark_all_read_label">Hamısını oxunmuş kimi işarələ</string>
   <string name="show_info_label">Məlumatı göstər</string>
   <string name="share_link_label">Web-səhifəyi paylaş</string>
-  <string name="feed_delete_confirmation_msg">Bütün kanallar və epizodlar silinəçək.</string>
   <!--actions on feeditems-->
   <string name="download_label">Yüklə</string>
   <string name="play_label">Oynat</string>
@@ -153,8 +152,6 @@
   <string name="pref_update_interval_hours_manual">Əl ilə</string>
   <!--Auto-Flattr dialog-->
   <!--Search-->
-  <string name="search_hint">Kanalları və ya epizodları axtar</string>
-  <string name="found_in_shownotes_label">Təsvirlərdə tapıldı</string>
   <string name="found_in_chapters_label">Fəsillərdə tapıldı</string>
   <string name="search_status_no_results">Heç nə tapılmadı</string>
   <string name="search_label">Axtar</string>
@@ -168,7 +165,6 @@
   <string name="deselect_all_label">Seçimi ləğv et</string>
   <string name="opml_export_label">OPML ixraçı</string>
   <string name="export_error_label">İxracın xətası</string>
-  <string name="opml_export_success_sum">OPML fayl:\u0020 yazılıb</string>
   <!--Sleep timer-->
   <string name="set_sleeptimer_label">Yuxu taymerini qoy</string>
   <string name="disable_sleeptimer_label">Yuxu taymerini keçir</string>
@@ -200,6 +196,8 @@
   <!--Rating dialog-->
   <!--Audio controls-->
   <!--proxy settings-->
+  <!--Database import/export-->
   <!--Casting-->
   <!--<string name="cast_failed_to_connect">Could not connect to the device</string>-->
+  <!--Notification channels-->
 </resources>
