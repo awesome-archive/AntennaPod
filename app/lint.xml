@@ -3,4 +3,12 @@
     <issue id="MissingTranslation">
         <ignore path="res/values/arrays.xml" />
     </issue>
+
+    <issue id="RestrictedApi" severity="error">
+        <ignore path="build" />
+    </issue>
+
+    <issue id="UnusedResources" severity="error">
+        <ignore path="**/values-**/strings.xml" />
+    </issue>
 </lint>

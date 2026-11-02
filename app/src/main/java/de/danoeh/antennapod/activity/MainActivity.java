@@ -1,499 +1,613 @@
 package de.danoeh.antennapod.activity;
 
-import android.annotation.TargetApi;
-import android.app.ProgressDialog;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
-import android.database.DataSetObserver;
-import android.os.Build;
+import android.media.AudioManager;
+import android.net.Uri;
 import android.os.Bundle;
-import android.os.Handler;
-import android.support.design.widget.Snackbar;
-import android.support.v4.app.Fragment;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.app.FragmentTransaction;
-import android.support.v4.widget.DrawerLayout;
-import android.support.v7.app.ActionBarDrawerToggle;
-import android.support.v7.app.AlertDialog;
-import android.support.v7.widget.Toolbar;
+import android.util.DisplayMetrics;
 import android.util.Log;
-import android.util.TypedValue;
-import android.view.ContextMenu;
-import android.view.Menu;
-import android.view.MenuInflater;
+import android.view.KeyEvent;
 import android.view.MenuItem;
 import android.view.View;
-import android.widget.AdapterView;
-import android.widget.ListView;
-
+import android.view.ViewGroup;
+import android.widget.EditText;
+import android.widget.RelativeLayout;
+import androidx.activity.OnBackPressedCallback;
+import androidx.annotation.IdRes;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.StyleRes;
+import androidx.appcompat.app.ActionBarDrawerToggle;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.drawerlayout.widget.DrawerLayout;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentContainerView;
+import androidx.fragment.app.FragmentManager;
+import androidx.fragment.app.FragmentTransaction;
+import androidx.work.WorkInfo;
+import androidx.work.WorkManager;
 import com.bumptech.glide.Glide;
-
-import org.apache.commons.lang3.ArrayUtils;
-import org.apache.commons.lang3.Validate;
-
-import java.util.List;
-
+import androidx.media3.session.MediaController;
+import com.google.android.material.appbar.MaterialToolbar;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.bottomsheet.BottomSheetBehavior;
+import com.google.android.material.snackbar.Snackbar;
 import de.danoeh.antennapod.R;
-import de.danoeh.antennapod.adapter.NavListAdapter;
-import de.danoeh.antennapod.core.asynctask.FeedRemover;
-import de.danoeh.antennapod.core.dialog.ConfirmationDialog;
-import de.danoeh.antennapod.core.event.MessageEvent;
-import de.danoeh.antennapod.core.event.ProgressEvent;
-import de.danoeh.antennapod.core.event.QueueEvent;
-import de.danoeh.antennapod.core.feed.EventDistributor;
-import de.danoeh.antennapod.core.feed.Feed;
-import de.danoeh.antennapod.core.preferences.PlaybackPreferences;
-import de.danoeh.antennapod.core.preferences.UserPreferences;
-import de.danoeh.antennapod.core.service.playback.PlaybackService;
-import de.danoeh.antennapod.core.storage.DBReader;
-import de.danoeh.antennapod.core.storage.DBTasks;
-import de.danoeh.antennapod.core.storage.DBWriter;
-import de.danoeh.antennapod.core.util.FeedItemUtil;
-import de.danoeh.antennapod.core.util.Flavors;
-import de.danoeh.antennapod.core.util.StorageUtils;
-import de.danoeh.antennapod.dialog.RatingDialog;
-import de.danoeh.antennapod.dialog.RenameFeedDialog;
-import de.danoeh.antennapod.fragment.AddFeedFragment;
-import de.danoeh.antennapod.fragment.DownloadsFragment;
-import de.danoeh.antennapod.fragment.EpisodesFragment;
-import de.danoeh.antennapod.fragment.ExternalPlayerFragment;
-import de.danoeh.antennapod.fragment.ItemlistFragment;
-import de.danoeh.antennapod.fragment.PlaybackHistoryFragment;
-import de.danoeh.antennapod.fragment.QueueFragment;
-import de.danoeh.antennapod.fragment.SubscriptionFragment;
-import de.danoeh.antennapod.menuhandler.NavDrawerActivity;
-import de.danoeh.antennapod.preferences.PreferenceController;
-import de.greenrobot.event.EventBus;
-import rx.Observable;
-import rx.Subscription;
-import rx.android.schedulers.AndroidSchedulers;
-import rx.schedulers.Schedulers;
+import de.danoeh.antennapod.event.EpisodeDownloadEvent;
+import de.danoeh.antennapod.event.FeedUpdateRunningEvent;
+import de.danoeh.antennapod.event.MessageEvent;
+import de.danoeh.antennapod.event.StreamingConfirmationEvent;
+import de.danoeh.antennapod.model.download.DownloadStatus;
+import de.danoeh.antennapod.net.download.service.feed.FeedUpdateManagerImpl;
+import de.danoeh.antennapod.net.download.serviceinterface.DownloadServiceInterface;
+import de.danoeh.antennapod.net.download.serviceinterface.FeedUpdateManager;
+import de.danoeh.antennapod.net.common.NetworkUtils;
+import de.danoeh.antennapod.net.sync.serviceinterface.SynchronizationQueue;
+import de.danoeh.antennapod.playback.cast.CastEnabledActivity;
+import de.danoeh.antennapod.playback.service.PlaybackController;
+import de.danoeh.antennapod.storage.databasemaintenanceservice.DatabaseMaintenanceWorker;
+import de.danoeh.antennapod.storage.importexport.AutomaticDatabaseExportWorker;
+import de.danoeh.antennapod.storage.preferences.PlaybackPreferences;
+import de.danoeh.antennapod.storage.preferences.UserPreferences;
+import de.danoeh.antennapod.ui.appstartintent.MainActivityStarter;
+import de.danoeh.antennapod.ui.appstartintent.MediaButtonStarter;
+import de.danoeh.antennapod.ui.common.NavigationToolbarActivity;
+import de.danoeh.antennapod.ui.common.ThemeSwitcher;
+import de.danoeh.antennapod.ui.common.ThemeUtils;
+import de.danoeh.antennapod.ui.discovery.DiscoveryFragment;
+import de.danoeh.antennapod.ui.screen.FavoritesFragment;
+import de.danoeh.antennapod.ui.screen.AddFeedFragment;
+import de.danoeh.antennapod.ui.screen.AllEpisodesFragment;
+import de.danoeh.antennapod.ui.screen.InboxFragment;
+import de.danoeh.antennapod.ui.screen.PlaybackHistoryFragment;
+import de.danoeh.antennapod.ui.screen.SearchFragment;
+import de.danoeh.antennapod.ui.screen.download.CompletedDownloadsFragment;
+import de.danoeh.antennapod.ui.screen.download.DownloadLogFragment;
+import de.danoeh.antennapod.ui.screen.drawer.BottomNavigation;
+import de.danoeh.antennapod.ui.screen.drawer.NavDrawerFragment;
+import de.danoeh.antennapod.ui.screen.drawer.NavigationNames;
+import de.danoeh.antennapod.ui.screen.episode.ItemPagerFragment;
+import de.danoeh.antennapod.ui.screen.feed.FeedItemlistFragment;
+import de.danoeh.antennapod.ui.screen.home.HomeFragment;
+import de.danoeh.antennapod.ui.screen.playback.audio.AudioPlayerFragment;
+import de.danoeh.antennapod.ui.screen.preferences.PreferenceActivity;
+import de.danoeh.antennapod.ui.screen.queue.QueueFragment;
+import de.danoeh.antennapod.ui.screen.rating.RatingDialogManager;
+import de.danoeh.antennapod.ui.screen.subscriptions.SubscriptionFragment;
+import de.danoeh.antennapod.ui.statistics.StatisticsFragment;
+import de.danoeh.antennapod.ui.common.BottomSheetBackPressedCallback;
+import de.danoeh.antennapod.ui.common.LockableBottomSheetBehavior;
+import org.apache.commons.lang3.ArrayUtils;
+import org.greenrobot.eventbus.EventBus;
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * The activity that is shown when the user launches the app.
  */
-public class MainActivity extends CastEnabledActivity implements NavDrawerActivity {
+public class MainActivity extends CastEnabledActivity implements NavigationToolbarActivity {
 
     private static final String TAG = "MainActivity";
-
-    private static final int EVENTS = EventDistributor.FEED_LIST_UPDATE
-            | EventDistributor.UNREAD_ITEMS_UPDATE;
+    public static final String MAIN_FRAGMENT_TAG = "main";
 
     public static final String PREF_NAME = "MainActivityPrefs";
     public static final String PREF_IS_FIRST_LAUNCH = "prefMainActivityIsFirstLaunch";
-    public static final String PREF_LAST_FRAGMENT_TAG = "prefMainActivityLastFragmentTag";
 
-    public static final String EXTRA_NAV_TYPE = "nav_type";
-    public static final String EXTRA_NAV_INDEX = "nav_index";
-    public static final String EXTRA_FRAGMENT_TAG = "fragment_tag";
-    public static final String EXTRA_FRAGMENT_ARGS = "fragment_args";
-    public static final String EXTRA_FEED_ID = "fragment_feed_id";
+    public static final String EXTRA_REFRESH_ON_START = "refresh_on_start";
+    public static final String KEY_GENERATED_VIEW_ID = "generated_view_id";
 
-    public static final String SAVE_BACKSTACK_COUNT = "backstackCount";
-    public static final String SAVE_TITLE = "title";
-
-    public static final String[] NAV_DRAWER_TAGS = {
-            QueueFragment.TAG,
-            EpisodesFragment.TAG,
-            SubscriptionFragment.TAG,
-            DownloadsFragment.TAG,
-            PlaybackHistoryFragment.TAG,
-            AddFeedFragment.TAG,
-            NavListAdapter.SUBSCRIPTION_LIST_TAG
-    };
-
-    private Toolbar toolbar;
-    private ExternalPlayerFragment externalPlayerFragment;
-    private DrawerLayout drawerLayout;
-
+    private @Nullable DrawerLayout drawerLayout;
+    private @Nullable ActionBarDrawerToggle drawerToggle;
+    private BottomNavigation bottomNavigation;
     private View navDrawer;
-    private ListView navList;
-    private NavListAdapter navAdapter;
-    private int mPosition = -1;
-
-    private ActionBarDrawerToggle drawerToggle;
-
-    private CharSequence currentTitle;
-
-    private ProgressDialog pd;
-
-    private Subscription subscription;
+    private LockableBottomSheetBehavior<FragmentContainerView> sheetBehavior;
+    private BottomSheetBackPressedCallback bottomSheetBackPressedCallback;
+    private OnBackPressedCallback openDefaultPageBackPressedCallback;
+    private int lastTheme = 0;
+    private Insets systemBarInsets = Insets.NONE;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        setTheme(UserPreferences.getNoTitleTheme());
-        super.onCreate(savedInstanceState);
-        StorageUtils.checkStorageAvailability(this);
-        setContentView(R.layout.main);
-
-        toolbar = (Toolbar) findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            findViewById(R.id.shadow).setVisibility(View.GONE);
-            int elevation = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 4,
-                    getResources().getDisplayMetrics());
-            getSupportActionBar().setElevation(elevation);
-        }
-
-        currentTitle = getTitle();
-
-        drawerLayout = (DrawerLayout) findViewById(R.id.drawer_layout);
-        navList = (ListView) findViewById(R.id.nav_list);
-        navDrawer = findViewById(R.id.nav_layout);
-
-        drawerToggle = new ActionBarDrawerToggle(this, drawerLayout, R.string.drawer_open, R.string.drawer_close);
+        lastTheme = ThemeSwitcher.getNoTitleTheme(this);
+        setTheme(lastTheme);
         if (savedInstanceState != null) {
-            int backstackCount = savedInstanceState.getInt(SAVE_BACKSTACK_COUNT, 0);
-            drawerToggle.setDrawerIndicatorEnabled(backstackCount == 0);
+            ensureGeneratedViewIdGreaterThan(savedInstanceState.getInt(KEY_GENERATED_VIEW_ID, 0));
         }
-        drawerLayout.setDrawerListener(drawerToggle);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.main);
+        checkFirstLaunch();
+
+        drawerLayout = findViewById(R.id.drawer_layout);
+        navDrawer = findViewById(R.id.navDrawerFragment);
+        bottomNavigation = new BottomNavigation(findViewById(R.id.bottomNavigationView)) {
+            @Override
+            public void onItemSelected(@IdRes int itemId) {
+                sheetBehavior.setState(BottomSheetBehavior.STATE_COLLAPSED);
+                if (itemId == R.id.bottom_navigation_settings) {
+                    startActivity(new Intent(MainActivity.this, PreferenceActivity.class));
+                    return;
+                }
+                loadFragment(NavigationNames.getBottomNavigationFragmentTag(itemId), null);
+            }
+        };
+        if (UserPreferences.isBottomNavigationEnabled()) {
+            bottomNavigation.buildMenu();
+            if (drawerLayout == null) { // Tablet mode
+                navDrawer.setVisibility(View.GONE);
+            } else {
+                drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
+            }
+            drawerLayout = null;
+            bottomNavigation.onCreateView();
+        } else {
+            bottomNavigation.hide();
+            bottomNavigation = null;
+            setNavDrawerSize();
+        }
+        openDefaultPageBackPressedCallback = new OpenDefaultPageBackPressedCallback();
+        if (drawerLayout != null) {
+            drawerLayout.addDrawerListener(new DrawerLayout.SimpleDrawerListener() {
+                @Override
+                public void onDrawerOpened(View drawerView) {
+                    updateMainBackCallbackEnabledState();
+                }
+
+                @Override
+                public void onDrawerClosed(View drawerView) {
+                    updateMainBackCallbackEnabledState();
+                }
+            });
+        }
+
+        // Consume navigation bar insets - we apply them in setPlayerVisible()
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main_view), (v, insets) -> {
+            systemBarInsets = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            updateInsets();
+            return new WindowInsetsCompat.Builder(insets)
+                    .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.NONE)
+                    .build();
+        });
 
         final FragmentManager fm = getSupportFragmentManager();
-
-        fm.addOnBackStackChangedListener(() -> drawerToggle.setDrawerIndicatorEnabled(fm.getBackStackEntryCount() == 0));
-
-        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
-        getSupportActionBar().setHomeButtonEnabled(true);
-
-        navAdapter = new NavListAdapter(itemAccess, this);
-        navList.setAdapter(navAdapter);
-        navList.setOnItemClickListener(navListClickListener);
-        navList.setOnItemLongClickListener(newListLongClickListener);
-        registerForContextMenu(navList);
-
-        navAdapter.registerDataSetObserver(new DataSetObserver() {
-            @Override
-            public void onChanged() {
-                selectedNavListIndex = getSelectedNavListIndex();
-            }
-        });
-
-        findViewById(R.id.nav_settings).setOnClickListener(v -> {
-            drawerLayout.closeDrawer(navDrawer);
-            startActivity(new Intent(MainActivity.this, PreferenceController.getPreferenceActivity()));
-        });
-
-        FragmentTransaction transaction = fm.beginTransaction();
-
-        Fragment mainFragment = fm.findFragmentByTag("main");
-        if (mainFragment != null) {
-            transaction.replace(R.id.main_view, mainFragment);
-        } else {
-            String lastFragment = getLastNavFragment();
-            if (ArrayUtils.contains(NAV_DRAWER_TAGS, lastFragment)) {
-                loadFragment(lastFragment, null);
+        fm.addOnBackStackChangedListener(this::updateMainBackCallbackEnabledState);
+        if (fm.findFragmentByTag(MAIN_FRAGMENT_TAG) == null) {
+            if (!UserPreferences.DEFAULT_PAGE_REMEMBER.equals(UserPreferences.getDefaultPage())) {
+                loadFragment(UserPreferences.getDefaultPage(), null);
             } else {
-                try {
-                    loadFeedFragmentById(Integer.parseInt(lastFragment), null);
-                } catch (NumberFormatException e) {
-                    // it's not a number, this happens if we removed
-                    // a label from the NAV_DRAWER_TAGS
-                    // give them a nice default...
-                    loadFragment(QueueFragment.TAG, null);
+                String lastFragment = NavDrawerFragment.getLastNavFragment(this);
+                if (ArrayUtils.contains(getResources().getStringArray(R.array.nav_drawer_section_tags), lastFragment)) {
+                    loadFragment(lastFragment, null);
+                } else {
+                    try {
+                        loadFeedFragmentById(Integer.parseInt(lastFragment), null);
+                    } catch (NumberFormatException e) {
+                        // it's not a number, this happens if we removed
+                        // a label from the NAV_DRAWER_TAGS
+                        // give them a nice default...
+                        loadFragment(HomeFragment.TAG, null);
+                    }
                 }
             }
         }
-        externalPlayerFragment = new ExternalPlayerFragment();
-        transaction.replace(R.id.playerFragment, externalPlayerFragment, ExternalPlayerFragment.TAG);
+
+        FragmentTransaction transaction = fm.beginTransaction();
+        NavDrawerFragment navDrawerFragment = new NavDrawerFragment();
+        transaction.replace(R.id.navDrawerFragment, navDrawerFragment, NavDrawerFragment.TAG);
+        AudioPlayerFragment audioPlayerFragment = new AudioPlayerFragment();
+        transaction.replace(R.id.audioplayerFragment, audioPlayerFragment, AudioPlayerFragment.TAG);
         transaction.commit();
 
-        checkFirstLaunch();
+        FragmentContainerView bottomSheet = findViewById(R.id.audioplayerFragment);
+        sheetBehavior = (LockableBottomSheetBehavior<FragmentContainerView>) BottomSheetBehavior.from(bottomSheet);
+        sheetBehavior.setHideable(false);
+        sheetBehavior.addBottomSheetCallback(bottomSheetCallback);
+        bottomSheetBackPressedCallback = new BottomSheetBackPressedCallback(false, sheetBehavior, bottomSheet);
+
+        FeedUpdateManager.getInstance().restartUpdateAlarm(this, false);
+        SynchronizationQueue.getInstance().syncIfNotSyncedRecently();
+        AutomaticDatabaseExportWorker.enqueueIfNeeded(this, false);
+        DatabaseMaintenanceWorker.enqueueIfNeeded(this);
+
+        WorkManager.getInstance(this)
+                .getWorkInfosByTagLiveData(FeedUpdateManagerImpl.WORK_TAG_FEED_UPDATE)
+                .observe(this, workInfos -> {
+                    boolean isRefreshingFeeds = false;
+                    for (WorkInfo workInfo : workInfos) {
+                        if (workInfo.getState() == WorkInfo.State.RUNNING) {
+                            isRefreshingFeeds = true;
+                        } else if (workInfo.getState() == WorkInfo.State.ENQUEUED) {
+                            isRefreshingFeeds = true;
+                        }
+                    }
+                    EventBus.getDefault().postSticky(new FeedUpdateRunningEvent(isRefreshingFeeds));
+                });
+        WorkManager.getInstance(this)
+                .getWorkInfosByTagLiveData(DownloadServiceInterface.WORK_TAG)
+                .observe(this, workInfos -> {
+                    Map<String, DownloadStatus> updatedEpisodes = new HashMap<>();
+                    for (WorkInfo workInfo : workInfos) {
+                        String downloadUrl = null;
+                        for (String tag : workInfo.getTags()) {
+                            if (tag.startsWith(DownloadServiceInterface.WORK_TAG_EPISODE_URL)) {
+                                downloadUrl = tag.substring(DownloadServiceInterface.WORK_TAG_EPISODE_URL.length());
+                            }
+                        }
+                        if (downloadUrl == null) {
+                            continue;
+                        }
+                        int status;
+                        if (workInfo.getState() == WorkInfo.State.RUNNING) {
+                            status = DownloadStatus.STATE_RUNNING;
+                        } else if (workInfo.getState() == WorkInfo.State.ENQUEUED
+                                || workInfo.getState() == WorkInfo.State.BLOCKED) {
+                            status = DownloadStatus.STATE_QUEUED;
+                        } else {
+                            status = DownloadStatus.STATE_COMPLETED;
+                        }
+                        int progress = workInfo.getProgress().getInt(DownloadServiceInterface.WORK_DATA_PROGRESS, -1);
+                        if (progress == -1 && status != DownloadStatus.STATE_COMPLETED) {
+                            status = DownloadStatus.STATE_QUEUED;
+                            progress = 0;
+                        }
+                        if (updatedEpisodes.containsKey(downloadUrl) && status == DownloadStatus.STATE_COMPLETED) {
+                            continue; // In case of a duplicate, prefer running/queued over completed
+                        }
+                        updatedEpisodes.put(downloadUrl, new DownloadStatus(status, progress));
+                    }
+                    DownloadServiceInterface.get().setCurrentDownloads(updatedEpisodes);
+                    EventBus.getDefault().postSticky(new EpisodeDownloadEvent(updatedEpisodes));
+                });
     }
 
-    private void saveLastNavFragment(String tag) {
-        Log.d(TAG, "saveLastNavFragment(tag: " + tag +")");
-        SharedPreferences prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE);
-        SharedPreferences.Editor edit = prefs.edit();
-        if(tag != null) {
-            edit.putString(PREF_LAST_FRAGMENT_TAG, tag);
-        } else {
-            edit.remove(PREF_LAST_FRAGMENT_TAG);
+    @Override
+    public void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        updateInsets();
+    }
+
+    /**
+     * View.generateViewId stores the current ID in a static variable.
+     * When the process is killed, the variable gets reset.
+     * This makes sure that we do not get ID collisions
+     * and therefore errors when trying to restore state from another view.
+     */
+    @SuppressWarnings("StatementWithEmptyBody")
+    private void ensureGeneratedViewIdGreaterThan(int minimum) {
+        while (View.generateViewId() <= minimum) {
+            // Generate new IDs
         }
-        edit.apply();
     }
 
-    private String getLastNavFragment() {
-        SharedPreferences prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE);
-        String lastFragment = prefs.getString(PREF_LAST_FRAGMENT_TAG, QueueFragment.TAG);
-        Log.d(TAG, "getLastNavFragment() -> " + lastFragment);
-        return lastFragment;
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt(KEY_GENERATED_VIEW_ID, View.generateViewId());
+    }
+
+    private final BottomSheetBehavior.BottomSheetCallback bottomSheetCallback = new AntennaPodBottomSheetCallback();
+
+    private class AntennaPodBottomSheetCallback extends BottomSheetBehavior.BottomSheetCallback {
+        @Override
+        public void onStateChanged(@NonNull View view, int state) {
+            if (state == BottomSheetBehavior.STATE_COLLAPSED) {
+                onSlide(view, 0.0f);
+                bottomSheetBackPressedCallback.setEnabled(false);
+            } else if (state == BottomSheetBehavior.STATE_EXPANDED) {
+                onSlide(view, 1.0f);
+                bottomSheetBackPressedCallback.setEnabled(true);
+            } else if (state == BottomSheetBehavior.STATE_HIDDEN) {
+                PlaybackController.bindToMedia3Service(MainActivity.this, controller -> {
+                    controller.clearMediaItems();
+                    controller.stop();
+                });
+                PlaybackPreferences.writeNoMediaPlaying();
+                setPlayerVisible(false);
+                bottomSheetBackPressedCallback.setEnabled(false);
+            }
+        }
+
+        @Override
+        public void onSlide(@NonNull View view, float slideOffset) {
+            AudioPlayerFragment audioPlayer = (AudioPlayerFragment) getSupportFragmentManager()
+                    .findFragmentByTag(AudioPlayerFragment.TAG);
+            if (audioPlayer == null) {
+                return;
+            }
+
+            if (slideOffset == 0.0f) { //STATE_COLLAPSED
+                audioPlayer.scrollToPage(AudioPlayerFragment.POS_COVER);
+            }
+
+            audioPlayer.fadePlayerToToolbar(slideOffset);
+        }
+    }
+
+    @Override
+    public void setupToolbarToggle(@NonNull MaterialToolbar toolbar, boolean displayUpArrow) {
+        if (drawerLayout != null) { // Tablet layout does not have a drawer
+            if (drawerToggle != null) {
+                drawerLayout.removeDrawerListener(drawerToggle);
+            }
+            drawerToggle = new ActionBarDrawerToggle(this, drawerLayout, toolbar,
+                    R.string.drawer_open, R.string.drawer_close);
+            drawerLayout.addDrawerListener(drawerToggle);
+            drawerToggle.syncState();
+            drawerToggle.setDrawerIndicatorEnabled(!displayUpArrow);
+            drawerToggle.setToolbarNavigationClickListener(v -> getSupportFragmentManager().popBackStack());
+        } else if (!displayUpArrow) {
+            toolbar.setNavigationIcon(null);
+        } else {
+            toolbar.setNavigationIcon(ThemeUtils.getDrawableFromAttr(this, R.attr.homeAsUpIndicator));
+            toolbar.setNavigationOnClickListener(v -> getSupportFragmentManager().popBackStack());
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (drawerLayout != null && drawerToggle != null) {
+            drawerLayout.removeDrawerListener(drawerToggle);
+        }
+        if (bottomNavigation != null) {
+            bottomNavigation.onDestroyView();
+        }
     }
 
     private void checkFirstLaunch() {
         SharedPreferences prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE);
         if (prefs.getBoolean(PREF_IS_FIRST_LAUNCH, true)) {
-            new Handler().postDelayed(() -> drawerLayout.openDrawer(navDrawer), 1500);
-
-            // for backward compatibility, we only change defaults for fresh installs
-            UserPreferences.setUpdateInterval(12);
+            FeedUpdateManager.getInstance().restartUpdateAlarm(this, true);
 
             SharedPreferences.Editor edit = prefs.edit();
             edit.putBoolean(PREF_IS_FIRST_LAUNCH, false);
-            edit.commit();
+            edit.apply();
         }
-    }
-
-    public void showDrawerPreferencesDialog() {
-        final List<String> hiddenDrawerItems = UserPreferences.getHiddenDrawerItems();
-        String[] navLabels = new String[NAV_DRAWER_TAGS.length];
-        final boolean[] checked = new boolean[NAV_DRAWER_TAGS.length];
-        for (int i = 0; i < NAV_DRAWER_TAGS.length; i++) {
-            String tag = NAV_DRAWER_TAGS[i];
-            navLabels[i] = navAdapter.getLabel(tag);
-            if (!hiddenDrawerItems.contains(tag)) {
-                checked[i] = true;
-            }
-        }
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
-        builder.setTitle(R.string.drawer_preferences);
-        builder.setMultiChoiceItems(navLabels, checked, (dialog, which, isChecked) -> {
-            if (isChecked) {
-                hiddenDrawerItems.remove(NAV_DRAWER_TAGS[which]);
-            } else {
-                hiddenDrawerItems.add(NAV_DRAWER_TAGS[which]);
-            }
-        });
-        builder.setPositiveButton(R.string.confirm_label, (dialog, which) -> UserPreferences.setHiddenDrawerItems(hiddenDrawerItems));
-        builder.setNegativeButton(R.string.cancel_label, null);
-        builder.create().show();
     }
 
     public boolean isDrawerOpen() {
         return drawerLayout != null && navDrawer != null && drawerLayout.isDrawerOpen(navDrawer);
     }
 
-    public List<Feed> getFeeds() {
-        return (navDrawerData != null) ? navDrawerData.feeds : null;
+    public LockableBottomSheetBehavior<FragmentContainerView> getBottomSheet() {
+        return sheetBehavior;
     }
 
-    public void loadFragment(int index, Bundle args) {
-        Log.d(TAG, "loadFragment(index: " + index + ", args: " + args + ")");
-        if (index < navAdapter.getSubscriptionOffset()) {
-            String tag = navAdapter.getTags().get(index);
-            loadFragment(tag, args);
+    private void updateInsets() {
+        setPlayerVisible(findViewById(R.id.audioplayerFragment).getVisibility() == View.VISIBLE);
+    }
+
+    public void setPlayerVisible(boolean visible) {
+        getBottomSheet().setLocked(!visible);
+        findViewById(R.id.audioplayerFragment).setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (visible) {
+            bottomSheetCallback.onStateChanged(null, getBottomSheet().getState()); // Update toolbar visibility
         } else {
-            int pos = index - navAdapter.getSubscriptionOffset();
-            loadFeedFragmentByPosition(pos, args);
+            getBottomSheet().setState(BottomSheetBehavior.STATE_COLLAPSED);
         }
+        View bottomPaddingView = findViewById(R.id.bottom_padding);
+        ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) bottomPaddingView.getLayoutParams();
+        params.height = systemBarInsets.bottom;
+        bottomPaddingView.setLayoutParams(params);
+
+        int externalPlayerHeight = (int) getResources().getDimension(R.dimen.external_player_height);
+        FragmentContainerView mainView = findViewById(R.id.main_content_view);
+        params = (ViewGroup.MarginLayoutParams) mainView.getLayoutParams();
+        params.setMargins(systemBarInsets.left, 0, systemBarInsets.right, (visible ? externalPlayerHeight : 0));
+        mainView.setLayoutParams(params);
+        sheetBehavior.setPeekHeight(externalPlayerHeight);
+        sheetBehavior.setHideable(true);
+        sheetBehavior.setGestureInsetBottomIgnored(true);
+
+        FragmentContainerView playerView = findViewById(R.id.playerFragment);
+        ViewGroup.MarginLayoutParams playerParams = (ViewGroup.MarginLayoutParams) playerView.getLayoutParams();
+        playerParams.setMargins(systemBarInsets.left, 0, systemBarInsets.right, 0);
+        playerView.setLayoutParams(playerParams);
+        RelativeLayout playerContent = findViewById(R.id.playerContent);
+        playerContent.setPadding(systemBarInsets.left, systemBarInsets.top, systemBarInsets.right, 0);
     }
 
-    public void loadFragment(String tag, Bundle args) {
+    public Fragment createFragmentInstance(String tag, Bundle args) {
         Log.d(TAG, "loadFragment(tag: " + tag + ", args: " + args + ")");
-        Fragment fragment = null;
+        Fragment fragment;
         switch (tag) {
+            case HomeFragment.TAG:
+                fragment = new HomeFragment();
+                break;
             case QueueFragment.TAG:
                 fragment = new QueueFragment();
                 break;
-            case EpisodesFragment.TAG:
-                fragment = new EpisodesFragment();
+            case InboxFragment.TAG:
+                fragment = new InboxFragment();
                 break;
-            case DownloadsFragment.TAG:
-                fragment = new DownloadsFragment();
+            case AllEpisodesFragment.TAG:
+                fragment = new AllEpisodesFragment();
+                break;
+            case CompletedDownloadsFragment.TAG:
+                fragment = new CompletedDownloadsFragment();
                 break;
             case PlaybackHistoryFragment.TAG:
                 fragment = new PlaybackHistoryFragment();
+                break;
+            case FavoritesFragment.TAG:
+                fragment = new FavoritesFragment();
                 break;
             case AddFeedFragment.TAG:
                 fragment = new AddFeedFragment();
                 break;
             case SubscriptionFragment.TAG:
-                SubscriptionFragment subscriptionFragment = new SubscriptionFragment();
-                fragment = subscriptionFragment;
+                fragment = new SubscriptionFragment();
+                break;
+            case StatisticsFragment.TAG:
+                fragment = new StatisticsFragment();
+                break;
+            case DiscoveryFragment.TAG:
+                fragment = new DiscoveryFragment();
                 break;
             default:
-                // default to the queue
-                tag = QueueFragment.TAG;
-                fragment = new QueueFragment();
+                // default to home screen
+                fragment = new HomeFragment();
                 args = null;
                 break;
         }
-        currentTitle = navAdapter.getLabel(tag);
-        getSupportActionBar().setTitle(currentTitle);
-        saveLastNavFragment(tag);
         if (args != null) {
             fragment.setArguments(args);
         }
-        loadFragment(fragment);
+        return fragment;
     }
 
-    private void loadFeedFragmentByPosition(int relPos, Bundle args) {
-        if(relPos < 0) {
-            return;
+    public void loadFragment(String tag, Bundle args) {
+        NavDrawerFragment.saveLastNavFragment(this, tag);
+        if (bottomNavigation != null) {
+            bottomNavigation.updateSelectedItem(tag);
         }
-        Feed feed = itemAccess.getItem(relPos);
-        loadFeedFragmentById(feed.getId(), args);
+        loadFragment(createFragmentInstance(tag, args));
     }
 
     public void loadFeedFragmentById(long feedId, Bundle args) {
-        Fragment fragment = ItemlistFragment.newInstance(feedId);
-        if(args != null) {
+        Fragment fragment = FeedItemlistFragment.newInstance(feedId);
+        if (args != null) {
             fragment.setArguments(args);
         }
-        saveLastNavFragment(String.valueOf(feedId));
-        currentTitle = "";
-        getSupportActionBar().setTitle(currentTitle);
+        NavDrawerFragment.saveLastNavFragment(this, String.valueOf(feedId));
         loadFragment(fragment);
     }
 
-    private void loadFragment(Fragment fragment) {
+    public void loadFragment(Fragment fragment) {
         FragmentManager fragmentManager = getSupportFragmentManager();
-        // clear back stack
-        for (int i = 0; i < fragmentManager.getBackStackEntryCount(); i++) {
-            fragmentManager.popBackStack();
-        }
+        // Clear all synchronously to avoid conflicting with predictive back gesture cancellation
+        fragmentManager.popBackStackImmediate(null, FragmentManager.POP_BACK_STACK_INCLUSIVE);
         FragmentTransaction t = fragmentManager.beginTransaction();
-        t.replace(R.id.main_view, fragment, "main");
-        fragmentManager.popBackStack();
+        t.replace(R.id.main_content_view, fragment, MAIN_FRAGMENT_TAG);
         // TODO: we have to allow state loss here
         // since this function can get called from an AsyncTask which
         // could be finishing after our app has already committed state
         // and is about to get shutdown.  What we *should* do is
         // not commit anything in an AsyncTask, but that's a bigger
         // change than we want now.
-        t.commitAllowingStateLoss();
-        if (navAdapter != null) {
-            navAdapter.notifyDataSetChanged();
+        t.commitNowAllowingStateLoss();
+
+        if (drawerLayout != null) { // Tablet layout does not have a drawer
+            drawerLayout.closeDrawer(navDrawer);
         }
+        updateMainBackCallbackEnabledState();
+    }
+
+    public void loadChildFragment(Fragment fragment, String navigationTag) {
+        Objects.requireNonNull(fragment);
+        if (navigationTag != null && bottomNavigation != null) {
+            bottomNavigation.updateSelectedItem(navigationTag);
+        }
+        getSupportFragmentManager().beginTransaction()
+                .hide(getSupportFragmentManager().findFragmentByTag(MAIN_FRAGMENT_TAG))
+                .add(R.id.main_content_view, fragment, MAIN_FRAGMENT_TAG)
+                .addToBackStack(null)
+                .commit();
+        updateMainBackCallbackEnabledState();
     }
 
     public void loadChildFragment(Fragment fragment) {
-        Validate.notNull(fragment);
-        FragmentManager fm = getSupportFragmentManager();
-        fm.beginTransaction()
-                .replace(R.id.main_view, fragment, "main")
-                .addToBackStack(null)
-                .commit();
+        loadChildFragment(fragment, null);
     }
-
-    public void dismissChildFragment() {
-        getSupportFragmentManager().popBackStack();
-    }
-
-    private int getSelectedNavListIndex() {
-        String currentFragment = getLastNavFragment();
-        if(currentFragment == null) {
-            // should not happen, but better safe than sorry
-            return -1;
-        }
-        int tagIndex = navAdapter.getTags().indexOf(currentFragment);
-        if(tagIndex >= 0) {
-            return tagIndex;
-        } else if(ArrayUtils.contains(NAV_DRAWER_TAGS, currentFragment)) {
-            // the fragment was just hidden
-            return -1;
-        } else { // last fragment was not a list, but a feed
-            long feedId = Long.parseLong(currentFragment);
-            if (navDrawerData != null) {
-                List<Feed> feeds = navDrawerData.feeds;
-                for (int i = 0; i < feeds.size(); i++) {
-                    if (feeds.get(i).getId() == feedId) {
-                        return i + navAdapter.getSubscriptionOffset();
-                    }
-                }
-            }
-            return -1;
-        }
-    }
-
-    private AdapterView.OnItemClickListener navListClickListener = new AdapterView.OnItemClickListener() {
-        @Override
-        public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-            int viewType = parent.getAdapter().getItemViewType(position);
-            if (viewType != NavListAdapter.VIEW_TYPE_SECTION_DIVIDER && position != selectedNavListIndex) {
-                loadFragment(position, null);
-            }
-            drawerLayout.closeDrawer(navDrawer);
-        }
-    };
-
-    private AdapterView.OnItemLongClickListener newListLongClickListener = new AdapterView.OnItemLongClickListener() {
-        @Override
-        public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
-            if(position < navAdapter.getTags().size()) {
-                showDrawerPreferencesDialog();
-                return true;
-            } else {
-                mPosition = position;
-                return false;
-            }
-        }
-    };
-
 
     @Override
     protected void onPostCreate(Bundle savedInstanceState) {
         super.onPostCreate(savedInstanceState);
-        drawerToggle.syncState();
-        if (savedInstanceState != null) {
-            currentTitle = savedInstanceState.getString(SAVE_TITLE);
-            if (!drawerLayout.isDrawerOpen(navDrawer)) {
-                getSupportActionBar().setTitle(currentTitle);
-            }
-            selectedNavListIndex = getSelectedNavListIndex();
+        if (drawerToggle != null) { // Tablet layout does not have a drawer
+            drawerToggle.syncState();
         }
+    }
+
+    private void restartActivity() {
+        finish();
+        startActivity(new Intent(this, MainActivity.class));
     }
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        drawerToggle.onConfigurationChanged(newConfig);
+        if (drawerToggle != null) { // Tablet layout does not have a drawer
+            drawerToggle.onConfigurationChanged(newConfig);
+        }
+        setNavDrawerSize();
+
+        @StyleRes int requiredTheme = ThemeSwitcher.getNoTitleTheme(this);
+        if (requiredTheme != lastTheme) {
+            restartActivity();
+        }
+    }
+
+    private void setNavDrawerSize() {
+        if (drawerToggle == null) { // Tablet layout does not have a drawer
+            return;
+        }
+        float screenPercent = getResources().getInteger(R.integer.nav_drawer_screen_size_percent) * 0.01f;
+        int width = (int) (getScreenWidth() * screenPercent);
+        int maxWidth = (int) getResources().getDimension(R.dimen.nav_drawer_max_screen_size);
+
+        navDrawer.getLayoutParams().width = Math.min(width, maxWidth);
+    }
+
+    private int getScreenWidth() {
+        DisplayMetrics displayMetrics = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getMetrics(displayMetrics);
+        return displayMetrics.widthPixels;
     }
 
     @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
-        outState.putString(SAVE_TITLE, getSupportActionBar().getTitle().toString());
-        outState.putInt(SAVE_BACKSTACK_COUNT, getSupportFragmentManager().getBackStackEntryCount());
+    protected void onRestoreInstanceState(@NonNull Bundle savedInstanceState) {
+        super.onRestoreInstanceState(savedInstanceState);
+
+        if (getBottomSheet().getState() == BottomSheetBehavior.STATE_EXPANDED) {
+            bottomSheetCallback.onSlide(null, 1.0f);
+        }
     }
 
     @Override
     public void onStart() {
         super.onStart();
-        EventDistributor.getInstance().register(contentUpdate);
         EventBus.getDefault().register(this);
-        RatingDialog.init(this);
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
+        new RatingDialogManager(this).showIfNeeded();
+        getOnBackPressedDispatcher().addCallback(this, openDefaultPageBackPressedCallback);
+        getOnBackPressedDispatcher().addCallback(this, bottomSheetBackPressedCallback);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        StorageUtils.checkStorageAvailability(this);
-        DBTasks.checkShouldRefreshFeeds(getApplicationContext());
+        handleNavIntent();
 
-        Intent intent = getIntent();
-        if (intent.hasExtra(EXTRA_FEED_ID) ||
-                (navDrawerData != null && intent.hasExtra(EXTRA_NAV_TYPE) &&
-                        (intent.hasExtra(EXTRA_NAV_INDEX) || intent.hasExtra(EXTRA_FRAGMENT_TAG)))) {
-            handleNavIntent();
+        boolean hasBottomNavigation = bottomNavigation != null;
+        if (lastTheme != ThemeSwitcher.getNoTitleTheme(this)
+                || hasBottomNavigation != UserPreferences.isBottomNavigationEnabled()) {
+            restartActivity();
         }
-        loadData();
-        RatingDialog.check();
+        if (UserPreferences.getHiddenDrawerItems().contains(NavDrawerFragment.getLastNavFragment(this))) {
+            loadFragment(UserPreferences.getDefaultPage(), null);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        lastTheme = ThemeSwitcher.getNoTitleTheme(this); // Don't recreate activity when a result is pending
     }
 
     @Override
     protected void onStop() {
         super.onStop();
-        EventDistributor.getInstance().unregister(contentUpdate);
         EventBus.getDefault().unregister(this);
-        if(subscription != null) {
-            subscription.unsubscribe();
-        }
-        if(pd != null) {
-            pd.dismiss();
-        }
     }
 
-
-    @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
@@ -507,35 +621,12 @@ public class MainActivity extends CastEnabledActivity implements NavDrawerActivi
     }
 
     @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        boolean retVal = super.onCreateOptionsMenu(menu);
-        if (Flavors.FLAVOR == Flavors.PLAY) {
-            switch (getLastNavFragment()) {
-                case QueueFragment.TAG:
-                case EpisodesFragment.TAG:
-                    requestCastButton(MenuItem.SHOW_AS_ACTION_IF_ROOM);
-                    return retVal;
-                case DownloadsFragment.TAG:
-                case PlaybackHistoryFragment.TAG:
-                case AddFeedFragment.TAG:
-                case SubscriptionFragment.TAG:
-                    return retVal;
-                default:
-                    requestCastButton(MenuItem.SHOW_AS_ACTION_NEVER);
-                    return retVal;
-            }
-        } else {
-            return retVal;
-        }
-    }
-
-    @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        if (drawerToggle.onOptionsItemSelected(item)) {
+        if (drawerToggle != null && drawerToggle.onOptionsItemSelected(item)) { // Tablet layout does not have a drawer
             return true;
         } else if (item.getItemId() == android.R.id.home) {
             if (getSupportFragmentManager().getBackStackEntryCount() > 0) {
-                dismissChildFragment();
+                getSupportFragmentManager().popBackStack();
             }
             return true;
         } else {
@@ -543,249 +634,240 @@ public class MainActivity extends CastEnabledActivity implements NavDrawerActivi
         }
     }
 
-
-    @Override
-    public void onCreateContextMenu(ContextMenu menu, View v, ContextMenu.ContextMenuInfo menuInfo) {
-        super.onCreateContextMenu(menu, v, menuInfo);
-        if(v.getId() != R.id.nav_list) {
-            return;
-        }
-        AdapterView.AdapterContextMenuInfo adapterInfo = (AdapterView.AdapterContextMenuInfo) menuInfo;
-        int position = adapterInfo.position;
-        if(position < navAdapter.getSubscriptionOffset()) {
-            return;
-        }
-        MenuInflater inflater = getMenuInflater();
-        inflater.inflate(R.menu.nav_feed_context, menu);
-        Feed feed = navDrawerData.feeds.get(position - navAdapter.getSubscriptionOffset());
-        menu.setHeaderTitle(feed.getTitle());
-        // episodes are not loaded, so we cannot check if the podcast has new or unplayed ones!
+    private void updateMainBackCallbackEnabledState() {
+        String defaultPage = UserPreferences.getDefaultPage();
+        boolean shouldEnable = getSupportFragmentManager().getBackStackEntryCount() > 0
+                || (!NavDrawerFragment.getLastNavFragment(this).equals(defaultPage)
+                        && !UserPreferences.DEFAULT_PAGE_REMEMBER.equals(defaultPage))
+                || (UserPreferences.backButtonOpensDrawer() && drawerLayout != null
+                        && bottomNavigation == null && !drawerLayout.isDrawerOpen(navDrawer));
+        openDefaultPageBackPressedCallback.setEnabled(shouldEnable);
     }
 
-
-    @Override
-    public boolean onContextItemSelected(MenuItem item) {
-        final int position = mPosition;
-        mPosition = -1; // reset
-        if(position < 0) {
-            return false;
+    class OpenDefaultPageBackPressedCallback extends OnBackPressedCallback {
+        OpenDefaultPageBackPressedCallback() {
+            super(false);
         }
-        Feed feed = navDrawerData.feeds.get(position - navAdapter.getSubscriptionOffset());
-        switch(item.getItemId()) {
-            case R.id.mark_all_seen_item:
-                DBWriter.markFeedSeen(feed.getId());
-                return true;
-            case R.id.mark_all_read_item:
-                DBWriter.markFeedRead(feed.getId());
-                return true;
-            case R.id.rename_item:
-                new RenameFeedDialog(this, feed).show();
-                return true;
-            case R.id.remove_item:
-                final FeedRemover remover = new FeedRemover(this, feed) {
-                    @Override
-                    protected void onPostExecute(Void result) {
-                        super.onPostExecute(result);
-                        if(getSelectedNavListIndex() == position) {
-                            loadFragment(EpisodesFragment.TAG, null);
-                        }
-                    }
-                };
-                ConfirmationDialog conDialog = new ConfirmationDialog(this,
-                        R.string.remove_feed_label,
-                        R.string.feed_delete_confirmation_msg) {
-                    @Override
-                    public void onConfirmButtonPressed(
-                            DialogInterface dialog) {
-                        dialog.dismiss();
-                        long mediaId = PlaybackPreferences.getCurrentlyPlayingFeedMediaId();
-                        if (mediaId > 0 &&
-                                FeedItemUtil.indexOfItemWithMediaId(feed.getItems(), mediaId) >= 0) {
-                            Log.d(TAG, "Currently playing episode is about to be deleted, skipping");
-                            remover.skipOnCompletion = true;
-                            int playerStatus = PlaybackPreferences.getCurrentPlayerStatus();
-                            if(playerStatus == PlaybackPreferences.PLAYER_STATUS_PLAYING) {
-                                sendBroadcast(new Intent(
-                                        PlaybackService.ACTION_PAUSE_PLAY_CURRENT_EPISODE));
-                            }
-                        }
-                        remover.executeAsync();
-                    }
-                };
-                conDialog.createNewDialog().show();
-                return true;
-            default:
-                return super.onContextItemSelected(item);
-        }
-    }
 
-    @Override
-    public void onBackPressed() {
-        if(isDrawerOpen()) {
-            drawerLayout.closeDrawer(navDrawer);
-        } else {
-            super.onBackPressed();
-        }
-    }
-
-    private DBReader.NavDrawerData navDrawerData;
-    private int selectedNavListIndex = 0;
-
-    private NavListAdapter.ItemAccess itemAccess = new NavListAdapter.ItemAccess() {
         @Override
-        public int getCount() {
-            if (navDrawerData != null) {
-                return navDrawerData.feeds.size();
+        public void handleOnBackPressed() {
+            String defaultPage = UserPreferences.getDefaultPage();
+            if (getSupportFragmentManager().getBackStackEntryCount() > 0) {
+                getSupportFragmentManager().popBackStack();
+            } else if (!NavDrawerFragment.getLastNavFragment(MainActivity.this).equals(defaultPage)
+                    && !UserPreferences.DEFAULT_PAGE_REMEMBER.equals(defaultPage)) {
+                loadFragment(defaultPage, null);
+            } else if (UserPreferences.backButtonOpensDrawer() && drawerLayout != null && bottomNavigation == null) {
+                drawerLayout.openDrawer(navDrawer);
             } else {
-                return 0;
+                finish();
             }
-        }
-
-        @Override
-        public Feed getItem(int position) {
-            if (navDrawerData != null && 0 <= position && position < navDrawerData.feeds.size()) {
-                return navDrawerData.feeds.get(position);
-            } else {
-                return null;
-            }
-        }
-
-        @Override
-        public int getSelectedItemIndex() {
-            return selectedNavListIndex;
-        }
-
-        @Override
-        public int getQueueSize() {
-            return (navDrawerData != null) ? navDrawerData.queueSize : 0;
-        }
-
-        @Override
-        public int getNumberOfNewItems() {
-            return (navDrawerData != null) ? navDrawerData.numNewItems : 0;
-        }
-
-        @Override
-        public int getNumberOfDownloadedItems() {
-            return (navDrawerData != null) ? navDrawerData.numDownloadedItems : 0;
-        }
-
-        @Override
-        public int getReclaimableItems() {
-            return (navDrawerData != null) ? navDrawerData.reclaimableSpace : 0;
-        }
-
-        @Override
-        public int getFeedCounter(long feedId) {
-            return navDrawerData != null ? navDrawerData.feedCounters.get(feedId) : 0;
-        }
-
-        @Override
-        public int getFeedCounterSum() {
-            if(navDrawerData == null) {
-                return 0;
-            }
-            int sum = 0;
-            for(int counter : navDrawerData.feedCounters.values()) {
-                sum += counter;
-            }
-            return sum;
-        }
-
-    };
-
-    private void loadData() {
-        subscription = Observable.fromCallable(DBReader::getNavDrawerData)
-                .subscribeOn(Schedulers.newThread())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(result -> {
-                    boolean handleIntent = (navDrawerData == null);
-
-                    navDrawerData = result;
-                    navAdapter.notifyDataSetChanged();
-
-                    if (handleIntent) {
-                        handleNavIntent();
-                    }
-                }, error -> Log.e(TAG, Log.getStackTraceString(error)));
-    }
-
-    public void onEvent(QueueEvent event) {
-        Log.d(TAG, "onEvent(" + event + ")");
-        // we are only interested in the number of queue items, not download status or position
-        if(event.action == QueueEvent.Action.DELETED_MEDIA ||
-                event.action == QueueEvent.Action.SORTED ||
-                event.action == QueueEvent.Action.MOVED) {
-            return;
-        }
-        loadData();
-    }
-
-    public void onEventMainThread(ProgressEvent event) {
-        Log.d(TAG, "onEvent(" + event + ")");
-        switch(event.action) {
-            case START:
-                pd = new ProgressDialog(this);
-                pd.setMessage(event.message);
-                pd.setIndeterminate(true);
-                pd.setCancelable(false);
-                pd.show();
-                break;
-            case END:
-                if(pd != null) {
-                    pd.dismiss();
-                }
-                break;
         }
     }
 
+    @Subscribe(threadMode = ThreadMode.MAIN)
     public void onEventMainThread(MessageEvent event) {
         Log.d(TAG, "onEvent(" + event + ")");
-        View parentLayout = findViewById(R.id.drawer_layout);
-        Snackbar snackbar = Snackbar.make(parentLayout, event.message, Snackbar.LENGTH_SHORT);
-        if(event.action != null) {
-            snackbar.setAction(getString(R.string.undo), v -> {
-                event.action.run();
-            });
-        }
-        snackbar.show();
-    }
-
-    private EventDistributor.EventListener contentUpdate = new EventDistributor.EventListener() {
-
-        @Override
-        public void update(EventDistributor eventDistributor, Integer arg) {
-            if ((EVENTS & arg) != 0) {
-                Log.d(TAG, "Received contentUpdate Intent.");
-                loadData();
+        Snackbar snackbar;
+        if (getBottomSheet().getState() == BottomSheetBehavior.STATE_EXPANDED) {
+            snackbar = Snackbar.make(findViewById(android.R.id.content), event.message, Snackbar.LENGTH_LONG);
+            if (findViewById(R.id.bottomNavigationView).getVisibility() == View.VISIBLE) {
+                snackbar.setAnchorView(findViewById(R.id.bottomNavigationView));
+            }
+        } else {
+            snackbar = Snackbar.make(findViewById(R.id.main_content_view), event.message, Snackbar.LENGTH_LONG);
+            if (findViewById(R.id.audioplayerFragment).getVisibility() == View.VISIBLE) {
+                snackbar.setAnchorView(findViewById(R.id.audioplayerFragment));
             }
         }
-    };
+        snackbar.show();
+
+        if (event.action != null) {
+            snackbar.setAction(event.actionText, v -> event.action.accept(this));
+        }
+    }
+
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onStreamingConfirmation(StreamingConfirmationEvent event) {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.stream_label)
+                .setMessage(NetworkUtils.isNetworkRestricted() && NetworkUtils.isVpnOverWifi()
+                        ? getString(R.string.confirm_mobile_streaming_notification_message)
+                                + "\n\n" + getString(R.string.confirm_mobile_download_dialog_message_vpn)
+                        : getString(R.string.confirm_mobile_streaming_notification_message))
+                .setPositiveButton(R.string.confirm_mobile_streaming_button_once, (dialog, which) ->
+                        PlaybackController.bindToMedia3Service(this, MediaController::play))
+                .setNegativeButton(R.string.confirm_mobile_streaming_button_always, (dialog, which) -> {
+                    UserPreferences.setAllowMobileStreaming(true);
+                    PlaybackController.bindToMedia3Service(this, MediaController::play);
+                })
+                .setNeutralButton(R.string.cancel_label, null)
+                .show();
+    }
 
     private void handleNavIntent() {
         Log.d(TAG, "handleNavIntent()");
         Intent intent = getIntent();
-        if (intent.hasExtra(EXTRA_FEED_ID) ||
-                (intent.hasExtra(EXTRA_NAV_TYPE) &&
-                        (intent.hasExtra(EXTRA_NAV_INDEX) || intent.hasExtra(EXTRA_FRAGMENT_TAG)))) {
-            int index = intent.getIntExtra(EXTRA_NAV_INDEX, -1);
-            String tag = intent.getStringExtra(EXTRA_FRAGMENT_TAG);
-            Bundle args = intent.getBundleExtra(EXTRA_FRAGMENT_ARGS);
-            long feedId = intent.getLongExtra(EXTRA_FEED_ID, 0);
-            if (index >= 0) {
-                loadFragment(index, args);
-            } else if (tag != null) {
-                loadFragment(tag, args);
-            } else if(feedId > 0) {
-                loadFeedFragmentById(feedId, args);
+        if (intent.hasExtra(MainActivityStarter.EXTRA_EPISODE_ID)) {
+            long episodeId = intent.getLongExtra(MainActivityStarter.EXTRA_EPISODE_ID, 0);
+            if (episodeId <= 0) {
+                return;
             }
+            loadChildFragment(ItemPagerFragment.newInstance(episodeId));
+            sheetBehavior.setState(BottomSheetBehavior.STATE_COLLAPSED);
+        } else if (intent.hasExtra(MainActivityStarter.EXTRA_FEED_ID)) {
+            long feedId = intent.getLongExtra(MainActivityStarter.EXTRA_FEED_ID, 0);
+            Bundle args = intent.getBundleExtra(MainActivityStarter.EXTRA_FRAGMENT_ARGS);
+            if (feedId > 0) {
+                if (intent.getBooleanExtra(MainActivityStarter.EXTRA_CLEAR_BACK_STACK, true)) {
+                    loadFeedFragmentById(feedId, args);
+                } else {
+                    loadChildFragment(FeedItemlistFragment.newInstance(feedId));
+                }
+            }
+            sheetBehavior.setState(BottomSheetBehavior.STATE_COLLAPSED);
+        } else if (intent.hasExtra(MainActivityStarter.EXTRA_FRAGMENT_TAG)) {
+            String tag = intent.getStringExtra(MainActivityStarter.EXTRA_FRAGMENT_TAG);
+            Bundle args = intent.getBundleExtra(MainActivityStarter.EXTRA_FRAGMENT_ARGS);
+            if (tag != null) {
+                if (intent.getBooleanExtra(MainActivityStarter.EXTRA_CLEAR_BACK_STACK, true)) {
+                    loadFragment(tag, null);
+                } else {
+                    loadChildFragment(createFragmentInstance(tag, args), tag);
+                }
+            }
+            sheetBehavior.setState(BottomSheetBehavior.STATE_COLLAPSED);
+        } else if (intent.getBooleanExtra(MainActivityStarter.EXTRA_OPEN_PLAYER, false)) {
+            sheetBehavior.setState(BottomSheetBehavior.STATE_EXPANDED);
+            bottomSheetCallback.onSlide(null, 1.0f);
+        } else {
+            handleDeeplink(intent.getData());
         }
-        setIntent(new Intent(MainActivity.this, MainActivity.class)); // to avoid handling the intent twice when the configuration changes
+
+        if (intent.getBooleanExtra(MainActivityStarter.EXTRA_OPEN_DRAWER, false) && drawerLayout != null) {
+            drawerLayout.open();
+        }
+        if (intent.getBooleanExtra(MainActivityStarter.EXTRA_OPEN_DOWNLOAD_LOGS, false)) {
+            new DownloadLogFragment().show(getSupportFragmentManager(), DownloadLogFragment.TAG);
+        }
+        if (intent.getBooleanExtra(EXTRA_REFRESH_ON_START, false)) {
+            FeedUpdateManager.getInstance().runOnceOrAsk(this);
+        }
+        // to avoid handling the intent twice when the configuration changes
+        setIntent(new Intent(MainActivity.this, MainActivity.class));
+        updateMainBackCallbackEnabledState();
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        handleNavIntent();
+    }
+
+    /**
+     * Handles the deep link incoming via App Actions.
+     * Performs an in-app search or opens the relevant feature of the app
+     * depending on the query.
+     *
+     * @param uri incoming deep link
+     */
+    private void handleDeeplink(Uri uri) {
+        if (uri == null || uri.getPath() == null) {
+            return;
+        }
+        Log.d(TAG, "Handling deeplink: " + uri.toString());
+        switch (uri.getPath()) {
+            case "/deeplink/search":
+                String query = uri.getQueryParameter("query");
+                if (query == null) {
+                    return;
+                }
+
+                this.loadChildFragment(SearchFragment.newInstance(query));
+                break;
+            case "/deeplink/main":
+                String feature = uri.getQueryParameter("page");
+                if (feature == null) {
+                    return;
+                }
+                switch (feature) {
+                    case "DOWNLOADS":
+                        loadFragment(CompletedDownloadsFragment.TAG, null);
+                        break;
+                    case "HISTORY":
+                        loadFragment(PlaybackHistoryFragment.TAG, null);
+                        break;
+                    case "EPISODES":
+                        loadFragment(AllEpisodesFragment.TAG, null);
+                        break;
+                    case "QUEUE":
+                        loadFragment(QueueFragment.TAG, null);
+                        break;
+                    case "SUBSCRIPTIONS":
+                        loadFragment(SubscriptionFragment.TAG, null);
+                        break;
+                    case "STATISTICS":
+                        loadFragment(StatisticsFragment.TAG, null);
+                        break;
+                    default:
+                        EventBus.getDefault().post(new MessageEvent(getString(R.string.app_action_not_found, feature)));
+                        return;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+  
+    //Hardware keyboard support
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        View currentFocus = getCurrentFocus();
+        if (currentFocus instanceof EditText) {
+            return super.onKeyUp(keyCode, event);
+        }
+
+        AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+        Integer customKeyCode = null;
+        EventBus.getDefault().post(event);
+
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_P:
+                customKeyCode = KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE;
+                break;
+            case KeyEvent.KEYCODE_J: //Fallthrough
+            case KeyEvent.KEYCODE_A:
+            case KeyEvent.KEYCODE_COMMA:
+                customKeyCode = KeyEvent.KEYCODE_MEDIA_REWIND;
+                break;
+            case KeyEvent.KEYCODE_K: //Fallthrough
+            case KeyEvent.KEYCODE_D:
+            case KeyEvent.KEYCODE_PERIOD:
+                customKeyCode = KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
+                break;
+            case KeyEvent.KEYCODE_PLUS: //Fallthrough
+            case KeyEvent.KEYCODE_W:
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI);
+                return true;
+            case KeyEvent.KEYCODE_MINUS: //Fallthrough
+            case KeyEvent.KEYCODE_S:
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI);
+                return true;
+            case KeyEvent.KEYCODE_M:
+                audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_TOGGLE_MUTE, AudioManager.FLAG_SHOW_UI);
+                return true;
+            default:
+                break;
+        }
+
+        if (customKeyCode != null) {
+            sendBroadcast(MediaButtonStarter.createIntent(this, customKeyCode));
+            return true;
+        }
+        return super.onKeyUp(keyCode, event);
     }
 }

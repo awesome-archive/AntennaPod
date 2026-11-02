@@ -1,37 +1,46 @@
 package de.test.antennapod.service.download;
 
-import android.test.InstrumentationTestCase;
+import android.content.Context;
+import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.filters.LargeTest;
 import android.util.Log;
 
 import java.io.File;
 import java.io.IOException;
 
-import de.danoeh.antennapod.core.feed.FeedFile;
-import de.danoeh.antennapod.core.preferences.UserPreferences;
-import de.danoeh.antennapod.core.service.download.DownloadRequest;
-import de.danoeh.antennapod.core.service.download.DownloadStatus;
-import de.danoeh.antennapod.core.service.download.Downloader;
-import de.danoeh.antennapod.core.service.download.HttpDownloader;
-import de.danoeh.antennapod.core.util.DownloadError;
+import de.danoeh.antennapod.model.feed.Feed;
+import de.danoeh.antennapod.net.download.service.feed.remote.Downloader;
+import de.danoeh.antennapod.net.download.service.feed.remote.HttpDownloader;
+import de.danoeh.antennapod.storage.preferences.UserPreferences;
+import de.danoeh.antennapod.model.download.DownloadRequest;
+import de.danoeh.antennapod.model.download.DownloadResult;
+import de.danoeh.antennapod.model.download.DownloadError;
 import de.test.antennapod.util.service.download.HTTPBin;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
 
-public class HttpDownloaderTest extends InstrumentationTestCase {
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
+@LargeTest
+public class HttpDownloaderTest {
     private static final String TAG = "HttpDownloaderTest";
     private static final String DOWNLOAD_DIR = "testdownloads";
 
-    private static boolean successful = true;
-
+    private String url404;
+    private String urlAuth;
     private File destDir;
-
     private HTTPBin httpServer;
 
     public HttpDownloaderTest() {
         super();
     }
 
-    @Override
-    protected void tearDown() throws Exception {
-        super.tearDown();
+    @After
+    public void tearDown() throws Exception {
         File[] contents = destDir.listFiles();
         for (File f : contents) {
             assertTrue(f.delete());
@@ -40,70 +49,79 @@ public class HttpDownloaderTest extends InstrumentationTestCase {
         httpServer.stop();
     }
 
-    @Override
-    protected void setUp() throws Exception {
-        super.setUp();
-        UserPreferences.init(getInstrumentation().getTargetContext());
-        destDir = getInstrumentation().getTargetContext().getExternalFilesDir(DOWNLOAD_DIR);
+    @Before
+    public void setUp() throws Exception {
+        UserPreferences.init(InstrumentationRegistry.getInstrumentation().getTargetContext());
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        destDir = context.getExternalFilesDir(DOWNLOAD_DIR);
+        if (destDir == null) { // Emulator without SD card
+            destDir = new File(context.getFilesDir(), DOWNLOAD_DIR);
+            destDir.mkdirs();
+        }
         assertNotNull(destDir);
         assertTrue(destDir.exists());
         httpServer = new HTTPBin();
         httpServer.start();
+        url404 = httpServer.getBaseUrl() + "/status/404";
+        urlAuth = httpServer.getBaseUrl() + "/basic-auth/user/passwd";
     }
 
-    private FeedFileImpl setupFeedFile(String downloadUrl, String title, boolean deleteExisting) {
-        FeedFileImpl feedfile = new FeedFileImpl(downloadUrl);
+    private Feed setupFeedFile(String downloadUrl, String title, boolean deleteExisting) {
+        Feed feedfile = new Feed(downloadUrl, "");
         String fileUrl = new File(destDir, title).getAbsolutePath();
         File file = new File(fileUrl);
         if (deleteExisting) {
             Log.d(TAG, "Deleting file: " + file.delete());
         }
-        feedfile.setFile_url(fileUrl);
+        feedfile.setLocalFileUrl(fileUrl);
         return feedfile;
     }
 
     private Downloader download(String url, String title, boolean expectedResult) {
-        return download(url, title, expectedResult, true, null, null, true);
+        return download(url, title, expectedResult, true, null, null);
     }
 
-    private Downloader download(String url, String title, boolean expectedResult, boolean deleteExisting, String username, String password, boolean deleteOnFail) {
-        FeedFile feedFile = setupFeedFile(url, title, deleteExisting);
-        DownloadRequest request = new DownloadRequest(feedFile.getFile_url(), url, title, 0, feedFile.getTypeAsInt(), username, password, deleteOnFail, null);
+    private Downloader download(String url, String title, boolean expectedResult, boolean deleteExisting,
+                                String username, String password) {
+        Feed feedFile = setupFeedFile(url, title, deleteExisting);
+        DownloadRequest request = new DownloadRequest(feedFile.getLocalFileUrl(), url, title, 0, Feed.FEEDFILETYPE_FEED,
+                username, password, null, false);
         Downloader downloader = new HttpDownloader(request);
         downloader.call();
-        DownloadStatus status = downloader.getResult();
+        DownloadResult status = downloader.getResult();
         assertNotNull(status);
-        assertTrue(status.isSuccessful() == expectedResult);
-        assertTrue(status.isDone());
+        assertEquals(expectedResult, status.isSuccessful());
         // the file should not exist if the download has failed and deleteExisting was true
-        assertTrue(!deleteExisting || new File(feedFile.getFile_url()).exists() == expectedResult);
+        assertTrue(!deleteExisting || new File(feedFile.getLocalFileUrl()).exists() == expectedResult);
         return downloader;
     }
 
-
-    private static final String URL_404 = HTTPBin.BASE_URL + "/status/404";
-    private static final String URL_AUTH = HTTPBin.BASE_URL + "/basic-auth/user/passwd";
-
+    @Test
     public void testPassingHttp() {
-        download(HTTPBin.BASE_URL + "/status/200", "test200", true);
+        download(httpServer.getBaseUrl() + "/status/200", "test200", true);
     }
 
+    @Test
     public void testRedirect() {
-        download(HTTPBin.BASE_URL + "/redirect/4", "testRedirect", true);
+        download(httpServer.getBaseUrl() + "/redirect/4", "testRedirect", true);
     }
 
+    @Test
     public void testGzip() {
-        download(HTTPBin.BASE_URL + "/gzip/100", "testGzip", true);
+        download(httpServer.getBaseUrl() + "/gzip/100", "testGzip", true);
     }
 
+    @Test
     public void test404() {
-        download(URL_404, "test404", false);
+        download(url404, "test404", false);
     }
 
+    @Test
     public void testCancel() {
-        final String url = HTTPBin.BASE_URL + "/delay/3";
-        FeedFileImpl feedFile = setupFeedFile(url, "delay", true);
-        final Downloader downloader = new HttpDownloader(new DownloadRequest(feedFile.getFile_url(), url, "delay", 0, feedFile.getTypeAsInt()));
+        final String url = httpServer.getBaseUrl() + "/delay/3";
+        Feed feedFile = setupFeedFile(url, "delay", true);
+        final Downloader downloader = new HttpDownloader(new DownloadRequest(feedFile.getLocalFileUrl(),
+                url, "delay", 0, Feed.FEEDFILETYPE_FEED, null, null, null, false));
         Thread t = new Thread() {
             @Override
             public void run() {
@@ -117,57 +135,34 @@ public class HttpDownloaderTest extends InstrumentationTestCase {
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
-        DownloadStatus result = downloader.getResult();
-        assertTrue(result.isDone());
+        DownloadResult result = downloader.getResult();
         assertFalse(result.isSuccessful());
-        assertTrue(result.isCancelled());
-        assertFalse(new File(feedFile.getFile_url()).exists());
     }
 
+    @Test
     public void testDeleteOnFailShouldDelete() {
-        Downloader downloader = download(URL_404, "testDeleteOnFailShouldDelete", false, true, null, null, true);
+        Downloader downloader = download(url404, "testDeleteOnFailShouldDelete", false, true, null, null);
         assertFalse(new File(downloader.getDownloadRequest().getDestination()).exists());
     }
 
+    @Test
     public void testDeleteOnFailShouldNotDelete() throws IOException {
         String filename = "testDeleteOnFailShouldDelete";
         File dest = new File(destDir, filename);
         dest.delete();
         assertTrue(dest.createNewFile());
-        Downloader downloader = download(URL_404, filename, false, false, null, null, false);
+        Downloader downloader = download(url404, filename, false, false, null, null);
         assertTrue(new File(downloader.getDownloadRequest().getDestination()).exists());
     }
 
+    @Test
     public void testAuthenticationShouldSucceed() throws InterruptedException {
-        download(URL_AUTH, "testAuthSuccess", true, true, "user", "passwd", true);
+        download(urlAuth, "testAuthSuccess", true, true, "user", "passwd");
     }
 
+    @Test
     public void testAuthenticationShouldFail() {
-        Downloader downloader = download(URL_AUTH, "testAuthSuccess", false, true, "user", "Wrong passwd", true);
+        Downloader downloader = download(urlAuth, "testAuthSuccess", false, true, "user", "Wrong passwd");
         assertEquals(DownloadError.ERROR_UNAUTHORIZED, downloader.getResult().getReason());
     }
-
-    /* TODO: replace with smaller test file
-    public void testUrlWithSpaces() {
-        download("http://acedl.noxsolutions.com/ace/Don't Call Salman Rushdie Sneezy in Finland.mp3", "testUrlWithSpaces", true);
-    }
-    */
-
-    private static class FeedFileImpl extends FeedFile {
-        public FeedFileImpl(String download_url) {
-            super(null, download_url, false);
-        }
-
-
-        @Override
-        public String getHumanReadableIdentifier() {
-            return download_url;
-        }
-
-        @Override
-        public int getTypeAsInt() {
-            return 0;
-        }
-    }
-
 }
